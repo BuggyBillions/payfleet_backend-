@@ -31,4 +31,12 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
+    'termii' => [
+        'api_key' => env('TERMII_API_KEY'),
+        'base_url' => env('TERMII_BASE_URL'),
+        'email_configuration_id' => env('TERMII_EMAIL_CONFIGURATION_ID'),
+        'registration_template' => env('TERMII_REGISTRATION_TEMPLATE_ID'),
+        'forget_template' => env('TERMII_FORGET_PASSWORD_TEMPLATE_ID'),
+        'resendotp_template' => env('TERMII_RESENDOTP_TEMPLATE_ID'),
+    ],
 ];

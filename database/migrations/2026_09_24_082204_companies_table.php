@@ -11,18 +11,21 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('users', function (Blueprint $table) {
+        Schema::create('companies', function (Blueprint $table) {
             $table->id();
             $table->string('name');
+            $table->string('logo')->nullable();
+            $table->text('about');
+            $table->string('phone');
             $table->string('email')->unique();
-            $table->timestamp('email_verified_at')->nullable();
+            $table->string('address');
+            $table->foreignId('user_id')
+                ->unique()
+                ->constrained()
+                ->cascadeOnDelete();
             $table->string('password');
-            $table->enum('role', ['company','admin','finance','support'])->default('company');
-            $table->boolean('is_active')->default(true);
-            $table->string('otp')->nullable();
-            $table->timestamp('otp_expires_at')->nullable();
-            $table->boolean('is_verified')->default(false);
-            $table->rememberToken();
+            $table->string('pin')->nullable();
+            $table->decimal('balance', 15, 2)->default(0);
             $table->timestamps();
         });
     }
@@ -32,6 +35,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('users');
+        Schema::dropIfExists('companies');
     }
 };
