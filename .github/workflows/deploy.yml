@@ -47,7 +47,6 @@ jobs:
 
             composer install --no-dev --optimize-autoloader
             php artisan migrate --force || true
-            php artisan db:seed --class=HolidaySeeder --force
             php artisan optimize:clear
             php artisan config:cache
             php artisan route:clear
