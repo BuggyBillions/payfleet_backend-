@@ -18,6 +18,7 @@ class AdminUserSeeder extends Seeder
                 'name' => 'Administrator',
                 'password' => Hash::make('Admin@123456'),
                 'role' => 'admin',
+                'phone' => '000000000000',
                 'is_active' => 1,
                 'otp' => null,
                 'otp_expires_at' => null,

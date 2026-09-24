@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AdminActionsController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\CompanyFundController;
 use App\Http\Controllers\CompanyProfileController;
 use App\Http\Controllers\EmployeeController;
 use App\Models\Employee;
@@ -58,4 +59,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('delete-employee/{id}', [EmployeeController::class, 'destroy']);
     Route::put('single-paying/{id}', [EmployeeController::class, 'togglePaying']);
     Route::put('multiple-paying', [EmployeeController::class, 'updateMultiplePaying']);
+    Route::put('update-company-details', [AdminActionsController::class, 'UpdateProfile']);
+
+
+    // funding
+    Route::post('company-funding', [CompanyFundController::class, 'Deposit']);
+    Route::post('create-account', [AdminActionsController::class, 'createAccount']);
+    Route::get('get-account', [AdminActionsController::class, 'getAccount']);
+    Route::get('banks', [CompanyFundController::class, 'callback']);
 });

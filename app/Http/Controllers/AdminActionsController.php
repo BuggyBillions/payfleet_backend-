@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-
+use App\Models\Account;
 use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -478,8 +478,7 @@ class AdminActionsController extends Controller
 
         $validator = Validator::make($request->all(), [
             'address'  => 'nullable|string',
-            'about'    => 'nullable|string',
-            'pin'      => 'nullable|string|size:6',
+            'pin'      => 'nullable|string|size:4',
             'password' => 'nullable|string|min:8',
         ]);
 
@@ -493,12 +492,8 @@ class AdminActionsController extends Controller
             $updateData['address'] = $request->address;
         }
 
-        if ($request->has('about')) {
-            $updateData['about'] = $request->about;
-        }
-
         if ($request->has('pin')) {
-            $updateData['pin'] = $request->pin;
+            $updateData['pin'] = Hash::make($request->pin);
         }
 
         if ($request->has('password')) {
@@ -518,6 +513,83 @@ class AdminActionsController extends Controller
             'success' => true,
             'message' => 'Company profile updated successfully.',
             'company' => $company
+        ]);
+    }
+
+    public function createAccount(Request $request){
+        $admin  =  $request->user();
+
+        if (!$admin) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthenticated. Please login again.'
+            ], 401);
+        }
+
+        if (!$this->isFullAdmin($admin)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Only an admin can create bank account.'
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'account_number' => [ 'required', 'max:15'],
+            'bank_name' => [ 'required'],
+            'account_name' => [ 'required', 'string'],
+        ]);
+
+        DB::beginTransaction();
+        try {
+            $user = Account::create([
+                'account_number' =>$validated['account_number'],
+                'bank_name' =>$validated['bank_name'],
+                'account_name' =>$validated['account_name'],
+            ]);
+
+            ActivityLog::create([
+                'user_id' => $admin->id,
+                'action' =>'Admin Created Bnak account',
+                'details' => json_encode([
+                    'created_finance_id' => $user->id,
+                    'email' => $user->email,
+                    'role' => $user->role,
+                ]),
+                'type' => 'admin',
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'status' => true,
+                'message' =>'Bank Account created successfully.',
+                'data' =>  $user
+            ], 201);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'status' => false,
+                'message' => 'Bank Account creation failed.',
+                'error' =>  $e->getMessage()
+
+            ], 500);
+        }
+    }
+
+    public function getAccount( Request $request): JsonResponse 
+    {
+        $query = Account::query()
+            ->select(['id','account_name','account_number','bank_name','created_at']);
+
+        $account = $query
+            ->latest()
+            ->paginate($request->get('per_page',20 ));
+
+        return response()->json([
+            'status' => true,
+            'message' =>'Account fetched successfully.',
+            'data' => $account
         ]);
     }
 }
