@@ -102,12 +102,184 @@ class CompanyFundController extends Controller
             ], 500);
         }
     }
-    
-    public function callback(Request $request)
+
+    public function testNomba()
     {
-        return redirect()->to(
-            'https://app.mudetrealsolution.com/user/transactions'
-        );
+        try {
+            $baseUrl = rtrim(config(  'services.nomba.base_url',  'https://api.nomba.com'),
+                '/'
+            );
+            $accountId = config('services.nomba.account_id');
+            $clientId = config(  'services.nomba.client_id');
+            $clientSecret = config(  'services.nomba.client_secret');
+
+            if (!$accountId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Nomba account ID is missing.'
+                ], 500);
+            }
+
+            if (!$clientId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Nomba client ID is missing.'
+                ], 500);
+            }
+
+            if (!$clientSecret) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Nomba client secret is missing.'
+                ], 500);
+            }
+
+            $authUrl = $baseUrl . '/v1/auth/token/issue';
+
+            $authResponse = Http::withOptions([ 'force_ip_resolve' => 'v4',])
+            ->withHeaders([
+                'accountId' =>  $accountId,
+                'Accept' => 'application/json',
+                'Content-Type' => 'application/json',
+            ])
+            ->timeout(60)
+            ->post(
+                $authUrl,
+                [
+                    'grant_type' => 'client_credentials',
+                    'client_id' => $clientId,
+                    'client_secret' => $clientSecret,
+                ]
+            );
+
+            $authBody =   $authResponse->json();
+            Log::info(
+                'Nomba Test Authentication Response',
+                [
+                    'url' =>  $authUrl,
+                    'status' =>  $authResponse->status(),
+                    'successful' =>  $authResponse->successful(),
+                    'body' => $authResponse->body(),
+                    'json' => $authBody,
+                ]
+            );
+
+            if (!$authResponse->successful()) {
+                return response()->json([
+                    'success' =>  false,
+                    'message' => 'Nomba authentication request failed.',
+                    'status' => $authResponse->status(),
+                    'error' =>
+                        $authBody
+                        ??
+                        $authResponse->body(),
+                ], $authResponse->status());
+            }
+
+            $token =data_get($authBody, 'data.access_token');
+
+            if (!$token) {
+                return response()->json([
+                    'success' =>  false,
+                    'message' => 'Nomba authentication succeeded but no access token was returned.',
+                    'response' => $authBody,
+                ], 502);
+            }
+
+            $bankUrl = $baseUrl . '/v1/transfers/banks';
+
+            $bankResponse = Http::withOptions([ 'force_ip_resolve' => 'v4',])
+            ->withHeaders([
+                'Authorization' => 'Bearer ' . $token,
+                'accountId' => $accountId,
+                'Accept' => 'application/json',
+                'Content-Type' => 'application/json',
+            ])
+            ->timeout(60)
+            ->get($bankUrl);
+            $body = $bankResponse->body();
+            $json = $bankResponse->json();
+            $contentType = $bankResponse->header(  'Content-Type');
+
+            Log::info(
+                'Nomba Test Bank Response',
+                [
+                    'url' => $bankUrl,
+                    'account_id' => $accountId,
+                    'status' => $bankResponse->status(),
+                    'successful' => $bankResponse->successful(),
+                    'content_type' => $contentType,
+                    'body' => $body,
+                    'json' => $json,
+                ]
+            );
+
+            if ($bankResponse->failed()) {
+                return response()->json([
+                    'success' =>   false,
+                    'message' => 'Nomba bank list request failed.',
+                    'status' => $bankResponse->status(),
+                    'content_type' => $contentType,
+                    'error' => $json ?? $body,
+                ], $bankResponse->status());
+            }
+
+            if ($json === null) {
+                return response()->json([
+                    'success' =>  false,
+                    'message' =>  'Nomba returned an empty or invalid JSON response.',
+                    'status' =>  $bankResponse->status(),
+                    'content_type' => $contentType,
+                    'raw_body' => $body,
+                ], 502);
+            }
+
+            if ( isset($json['code']) && $json['code'] !== '00') {
+                return response()->json([
+                    'success' => false,
+                    'message' =>
+                        $json['description']
+                        ??
+                        $json['message']
+                        ??
+                        'Nomba bank list request was not successful.',
+                    'status' => $bankResponse->status(),
+                    'nomba_response' =>  $json,
+                ], 422);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Nomba connection and bank list test successful.',
+                'authentication' => [
+                    'success' =>true,
+                    'status' => $authResponse->status(),
+                ],
+                'bank_list' => [
+                    'success' => true,
+                    'status' => $bankResponse->status(),
+                    'content_type' => $contentType,
+                    'data' => $json,
+                ],
+            ]);
+
+
+        } catch (\Throwable $e) {
+            Log::error(
+                'Nomba Test Exception',
+                [
+                    'message' =>   $e->getMessage(),
+                    'file' =>  $e->getFile(),
+                    'line' =>  $e->getLine(),
+                    'trace' =>  $e->getTraceAsString(),
+                ]
+            );
+
+            return response()->json([
+                'success' =>   false,
+                'message' =>  $e->getMessage(),
+            ], 500);
+        }
     }
 
     public function resolveBankAccount(Request $request)

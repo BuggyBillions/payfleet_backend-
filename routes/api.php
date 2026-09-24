@@ -66,5 +66,5 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('company-funding', [CompanyFundController::class, 'Deposit']);
     Route::post('create-account', [AdminActionsController::class, 'createAccount']);
     Route::get('get-account', [AdminActionsController::class, 'getAccount']);
-    Route::get('banks', [CompanyFundController::class, 'callback']);
+    Route::get('banks', [CompanyFundController::class, 'testNomba']);
 });
