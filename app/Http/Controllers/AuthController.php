@@ -150,31 +150,28 @@ class AuthController extends Controller
     {
         $data = $request->validate([
             'email' => ['required', 'email'],
-            'password' => ['required']
+            'password' => ['required'],
         ]);
 
         $user = User::select(
-                'id',
-                'name',
-                'email',
-                'is_active',
-                'password',
-                'role',
-                'is_verified',
-                'is_active',
-            )
-            ->where('email', $data['email'])
-            ->first();
+            'id',
+            'name',
+            'email',
+            'is_active',
+            'password',
+            'role',
+            'is_verified'
+        )
+        ->where('email', $data['email'])
+        ->first();
 
-        
-            if (!Hash::check($data['password'], $user->password)) {
+        if (!$user || !Hash::check($data['password'], $user->password)) {
             return response()->json([
-                'message' => 'Invalid email or password'
-            ], 422);
+                'message' => 'Incorrect email or password'
+            ], 401);
         }
 
-
-        if (!in_array($user->role, ['company', 'finance','admin','support'])) {
+        if (!in_array($user->role, ['company', 'finance', 'admin', 'support'])) {
             return response()->json([
                 'message' => 'Email is not authorized to login here'
             ], 403);
@@ -202,7 +199,7 @@ class AuthController extends Controller
             'details' => 'User logged into the application',
             'type' => 'system',
             'created_at' => now(),
-            'updated_at' => now()
+            'updated_at' => now(),
         ]);
 
         Notification::create([
@@ -216,9 +213,9 @@ class AuthController extends Controller
             'message' => 'Login successful',
             'data' => [
                 'token' => $token,
-                'user' => $user
+                'user' => $user,
             ]
-        ]);
+        ], 200);
     }
 
     public function verify(Request $request)

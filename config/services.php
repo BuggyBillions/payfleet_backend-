@@ -40,11 +40,9 @@ return [
         'resendotp_template' => env('TERMII_RESENDOTP_TEMPLATE_ID'),
     ],
 
-     'nomba' => [
-        'client_id'     => env('NOMBA_CLIENT_ID'),
-        'client_secret' => env('NOMBA_CLIENT_SECRET'),
-        'account_id'    => env('NOMBA_ACCOUNT_ID'),
-        'base_url'      => env('NOMBA_BASE_URL'),
-        'webhook_secret' => env('NOMBA_WEBHOOK_SECRET'),
+     'paystack' => [
+        'secret_key'     => env('PAYSTACK_SECRET_KEY'),
+        'public_key' => env('PAYSTACK_PUBLIC_KEY'),
+        'base_url' => env('PAYSTACK_BASE_URL', 'https://api.paystack.co'),
     ],
 ];
