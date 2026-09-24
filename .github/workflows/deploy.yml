@@ -40,7 +40,17 @@ jobs:
             APP_DIR="$BASE_DIR/apitestLaravel"
             WEB_DIR="$BASE_DIR/api"
 
+            mkdir -p "$APP_DIR"
             cd "$APP_DIR"
+
+            git config --global --add safe.directory "$APP_DIR" || true
+
+            if [ ! -d ".git" ]; then
+              echo "Initializing Git repository in $APP_DIR..."
+              git init -b main
+              git remote add origin https://github.com/${{ github.repository }}.git || git remote set-url origin https://github.com/${{ github.repository }}.git
+            fi
+
             git fetch --all
             git reset --hard origin/main
             chmod 600 "$APP_DIR/.env"
