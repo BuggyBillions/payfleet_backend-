@@ -25,7 +25,26 @@ class CompanyFundController extends Controller
     private function isFullCompany(User $user): bool
     {
         return $user->role === 'company';
-    }    
+    }  
+    
+    private function isStaff(User $user) : bool 
+    {
+      return $user->role === 'finance';   
+    }
+
+    private function isFullAdmin(User $user) : bool{
+        return $user->role === 'admin';
+    }
+
+    private function canManageUsers(User $user): bool
+    {
+        return ($user->is_active == 1 &&
+            (
+                $this->isFullAdmin($user) ||
+                $this->isStaff($user) 
+            )
+        );
+    }
         
     public function Deposit(Request $request)  {
         $admin = $request->user();
@@ -250,5 +269,78 @@ class CompanyFundController extends Controller
             'message' => 'Banks fetched successfully.',
             'data' => $banks
         ], 200);
+    }
+
+    public function getDeposit(Request $request)
+    {
+        $admin = $request->user();
+
+        if (!$this->canManageUsers($admin)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthorized.'
+            ], 403);
+        }
+
+        $search = $request->input('search');
+
+        $deposits = Deposit::with([
+                'transaction',
+                'company'
+            ])
+            ->when($search, function ($query) use ($search) {
+                $query->where(function ($q) use ($search) {
+
+                    $q->where('amount', 'LIKE', '%' . $search . '%')
+                        ->orWhere('company_id', 'LIKE', '%' . $search . '%')
+                        ->orWhereHas('company', function ($companyQuery) use ($search) {
+                            $companyQuery->where('name', 'LIKE', '%' . $search . '%')
+                                ->orWhere('email', 'LIKE', '%' . $search . '%')
+                                ->orWhere('phone', 'LIKE', '%' . $search . '%');
+                        })
+                        ->orWhereHas('transaction', function ($transactionQuery) use ($search) {
+                            $transactionQuery->where('status', 'LIKE', '%' . $search . '%');
+                        });
+                });
+            })
+            ->latest()
+            ->paginate(20);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Deposits fetched successfully',
+            'data' => $deposits
+        ], 200);
+    }
+
+    public function eachDeposit(Request $request , $id)
+    {
+        $admin  = $request->user();
+
+        if(!$this->canManageUsers($admin)){
+            return response ()->json([
+                'status'   => false,
+                'message'  => 'Unathorized for this endpoint.'
+            ], 403);
+        }
+
+        $deposits = Deposit::with([
+                'transaction',
+                'company'
+            ])
+            ->first();
+
+        if(!$deposits){
+            return response()->json([
+                'status'    =>  false, 
+                'message'   =>  'Deposit not found'
+            ], 404);
+        }  
+        
+        return response()->json([
+            'status'    =>  true,
+            'message'   => 'Deposit fet5ach successfully.',
+            'data'      => $deposits
+        ]);
     }
 }

@@ -14,4 +14,14 @@ class Deposit extends Model
         'company_id',
         'transaction_id'
     ];
+
+    public function Transaction()
+    {
+        return $this->belongsTo(Transaction::class);
+    }
+
+    public function company()
+    {
+        return $this->belongsTo(Company::class, 'company_id');
+    }
 }

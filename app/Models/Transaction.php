@@ -20,4 +20,15 @@ class Transaction extends Model
         'status',
         'description'
     ];
+
+    public function Deposit()
+    {
+        return $this->hasOne(Deposit::class);
+    }
+
+    public function company()
+    {
+        return $this->hasOne(Company::class);
+    }
+    
 }

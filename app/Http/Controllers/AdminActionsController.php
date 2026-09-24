@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Validator;
 use App\Models\Company;
 use App\Models\Employees;
 use App\Models\Notification;
+use App\Models\Transaction;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\JsonResponse;
@@ -591,5 +592,113 @@ class AdminActionsController extends Controller
             'message' =>'Account fetched successfully.',
             'data' => $account
         ]);
+    }
+
+    public function confirmDeposit(Request $request, $id)
+    {
+        $admin = $request->user();
+
+        if (!$this->canManageUsers($admin)) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Unauthorized.'
+            ], 403);
+        }
+
+        DB::beginTransaction();
+
+        try {
+            $transaction = Transaction::find($id);
+            if (!$transaction) {
+                DB::rollBack();
+
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Transaction not found.'
+                ], 404);
+            }
+
+            if ($transaction->status === 'successful') {
+                DB::rollBack();
+
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'This deposit has already been confirmed.'
+                ], 400);
+            }
+
+            $company = Company::find($transaction->company_id);
+
+            if (!$company) {
+                DB::rollBack();
+
+                return response()->json([
+                    'status'  => false,
+
+                    'message' => 'Company not found.'
+                ], 404);
+            }
+
+            $previousBalance = $company->balance ?? 0;
+            $amount = $transaction->amount;
+            $newBalance = $previousBalance + $amount;
+            $company->update([
+                'balance' => $newBalance
+            ]);
+
+            $userId = $company->user_id;
+
+            ActivityLog::create([
+                'user_id' => $userId,
+                'action'  => 'Deposit Confirmed',
+                'details' => "Deposit of ₦{$amount} confirmed successfully. Reference: {$transaction->reference}. New balance: ₦{$newBalance}",
+                'type'    => 'transaction',
+            ]);
+
+            Notification::create([
+                'user_id' => $userId,
+                'title'   => 'Deposit Successful',
+                'message' => "Your deposit of ₦{$amount} has been confirmed successfully. Your new balance is ₦{$newBalance}.",
+                'type'    => 'transaction',
+                'is_read' => false,
+            ]);
+
+            $transaction->update([
+                'status'          => 'successful',
+                'previous_balance' => $previousBalance,
+                'current_balance'  => $newBalance,
+            ]);
+        
+            
+            DB::commit();
+
+            return response()->json([
+                'status'  => true,
+                'message' => 'Deposit confirmed successfully.',
+                'data' => [
+                    'transaction_id' => $transaction->id,
+                    'reference' => $transaction->reference,
+                    'amount' => $amount,
+                    'previous_balance' => $previousBalance,
+                    'current_balance' => $newBalance,
+                    'transaction_status' => 'successful',
+                    'company' => [
+                        'id' => $company->id,
+                        'name' => $company->name,
+                        'balance' => $company->balance,
+                    ],
+                ]
+            ], 200);
+
+        } catch (\Exception $e) {
+
+            DB::rollBack();
+
+            return response()->json([
+                'status'  => false,
+                'message' => 'Failed to confirm deposit.',
+                'error'   => $e->getMessage(),
+            ], 500);
+        }
     }
 }

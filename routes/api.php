@@ -37,6 +37,7 @@ Route::post('forgot-password',[CompanyProfileController::class,'forgotPassword']
 Route::post('/verify-forgot-otp',[CompanyProfileController::class,'verifyResetOtp']);
 Route::post('/reset-password',[CompanyProfileController::class,'resetPassword']);
 
+
 // Admin Actions
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('all-companies',[AdminActionsController::class,'getCompanies']);
@@ -48,6 +49,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('deactivate-users/{id}', [AdminActionsController::class, 'deactivateUser']);
     Route::patch('activate-users/{id}', [AdminActionsController::class, 'activateUser']);
     Route::delete('delete-users/{id}',[AdminActionsController::class, 'deleteUser']);
+    Route::get('all-deposit', [CompanyFundController::class, 'getDeposit']);
+    Route::get('each-deposit/{id}', [CompanyFundController::class, 'eachDeposit']);
+    Route::post('confirm-deposit/{id}',[AdminActionsController::class, 'confirmDeposit']);
 });
 
 // companies

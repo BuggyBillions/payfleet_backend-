@@ -45,4 +45,9 @@ class Company extends Model
     {
         return $this->hasMany(Employees::class, 'company_id');
     }
+
+    public function transaction()
+    {
+        return $this->belongsTo(Transaction::class, 'company_id');
+    }
 }
