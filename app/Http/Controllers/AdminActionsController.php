@@ -32,7 +32,11 @@ class AdminActionsController extends Controller
 
         $search = $request->input('search');
 
-        $companies = Company::with(['user','tier'])
+        $companies = Company::with([
+                'user',
+                'tier',
+                'employees'
+            ])
             ->withCount(['employees as no_of_employee'])
             ->when($search, function ($query) use ($search) {
                 $query->where(function ($q) use ($search) {
