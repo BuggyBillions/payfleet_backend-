@@ -135,8 +135,8 @@ class ChatController extends Controller
 
         $users = User::query()
             ->whereIn('id', $userIds)
-            ->where('role', 'user')
-            ->select(['id','first_name','last_name','phone','email',])
+            ->where('role', 'company')
+            ->select(['id','name','email','phone','role',])
             ->get()
             ->map(function ($user) use ($admin) {
 
@@ -184,7 +184,7 @@ class ChatController extends Controller
         }
 
         $user = User::query()
-            ->where('role', 'user')
+            ->where('role', 'company')
             ->find($userId);
 
         if (!$user) {
@@ -200,8 +200,8 @@ class ChatController extends Controller
                     ->orWhere('receiver_id', $userId);
             })
             ->with([
-                'sender:id,first_name,last_name,role',
-                'receiver:id,first_name,last_name,role',
+                'sender:id,name,email,role',
+                'receiver:id,name,email,role',
             ])
             ->orderBy('created_at', 'asc')
             ->get();
@@ -237,7 +237,7 @@ class ChatController extends Controller
             ], 401);
         }
 
-        if ($sender->is_active != 1 || $sender->is_verified != 1 || !in_array($sender->role, ['admin', 'staff'])) {
+        if ($sender->is_active != 1 || $sender->is_verified != 1 || !in_array($sender->role, ['admin', 'support'])) {
             return response()->json([
                 'status' => false,
                 'message' => 'You are not authorized to send support messages.',
@@ -245,13 +245,13 @@ class ChatController extends Controller
         }
 
         $receiver = User::query()
-            ->where('role', 'user')
+            ->where('role', 'company')
             ->find($userId);
 
         if (!$receiver) {
             return response()->json([
                 'status' => false,
-                'message' => 'User not found.',
+                'message' => 'Company not found.',
             ], 404);
         }
 
