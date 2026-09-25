@@ -162,12 +162,13 @@ class TierController extends Controller
     public function eachTier(Request $request , $id) {
         $admin = $request->user();
 
-        if(!$this->isFullAdmin($admin)){
+        if (!$this->canManageUsers($admin)) {
             return response()->json([
-                'status'  => false,
-                'message' => 'Unauthorized.'
+                'status' => false,
+                'message' => 'You are not authorized to view tier upgrade requests.'
             ], 403);
         }
+
 
         $user = Tier::query()
             ->where('id', $id)
