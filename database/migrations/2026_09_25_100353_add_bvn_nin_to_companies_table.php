@@ -12,8 +12,8 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('companies', function (Blueprint $table) {
-            $table->integer('bvn')->nullable();
-            $table->integer('nin')->nullable();
+            $table->string('bvn')->nullable();
+            $table->string('nin')->nullable();
             $table->string('cac')->nullable();
             $table->string('mermat')->nullable();
             $table->string('status_report')->nullable();

@@ -357,6 +357,7 @@ class CompanyProfileController extends Controller
             'message' => 'Notification marked as read'
         ]);
     }
+
     private function isFullCompany(User $user): bool
     {
         return $user->role === 'company';
@@ -373,7 +374,6 @@ class CompanyProfileController extends Controller
             ], 401);
         }
 
-        // Only company accounts can request an upgrade
         if (!$this->isFullCompany($user)) {
             return response()->json([
                 'status' => false,
@@ -391,21 +391,11 @@ class CompanyProfileController extends Controller
         }
 
         $validated = $request->validate([
-            'requested_tier' => [
-                'required',
-                'integer',
-                'exists:tiers,id'
-            ],
+            'requested_tier' => ['required','integer','exists:tiers,id'],
         ]);
 
         $currentTier = (int) $company->tier;
         $requestedTier = (int) $validated['requested_tier'];
-
-        /*
-        |--------------------------------------------------------------------------
-        | Make sure they are actually moving forward
-        |--------------------------------------------------------------------------
-        */
 
         if ($requestedTier <= $currentTier) {
             return response()->json([
@@ -413,12 +403,6 @@ class CompanyProfileController extends Controller
                 'message' => 'You can only upgrade to a higher tier.'
             ], 422);
         }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Check if there is already a pending request
-        |--------------------------------------------------------------------------
-        */
 
         $existingRequest = TierUpgradeRequest::where(
             'company_id',
@@ -434,14 +418,7 @@ class CompanyProfileController extends Controller
             ], 422);
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Tier 2 Requirements
-        |--------------------------------------------------------------------------
-        */
-
         if ($requestedTier >= 2) {
-
             if (empty($company->bvn)) {
                 return response()->json([
                     'status' => false,
@@ -457,14 +434,8 @@ class CompanyProfileController extends Controller
             }
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Tier 3 Requirements
-        |--------------------------------------------------------------------------
-        */
 
         if ($requestedTier >= 3) {
-
             if (empty($company->memart)) {
                 return response()->json([
                     'status' => false,
@@ -479,12 +450,6 @@ class CompanyProfileController extends Controller
                 ], 422);
             }
         }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Create upgrade request
-        |--------------------------------------------------------------------------
-        */
 
         $upgradeRequest = TierUpgradeRequest::create([
             'company_id' => $company->id,
@@ -506,16 +471,49 @@ class CompanyProfileController extends Controller
         ], 201);
     }
 
+    private function isFullAdmin(User $user): bool
+    {
+        return $user->role === 'admin';
+    }
+
+    private function isStaff(User $user): bool
+    {
+        return (
+            $user->role === 'finance'
+        );
+    }
+
+    private function isSupport(User $user): bool
+    {
+        return (
+            $user->role === 'support'
+        );
+    }
+
+    private function canManageUsers(User $user): bool
+    {
+        return ($user->is_active == 1 &&
+            (
+                $this->isFullAdmin($user) ||
+                $this->isStaff($user) || 
+                $this->isSupport($user)
+            )
+        );
+    }
+
     public function tierUpgradeRequests(Request $request): JsonResponse
     {
         $admin = $request->user();
 
-        if (!$admin || $admin->role !== 'admin') {
+        if (!$this->canManageUsers($admin)) {
             return response()->json([
                 'status' => false,
-                'message' => 'Only admins can view tier upgrade requests.'
+                'message' => 'You are not authorized to view tier upgrade requests.'
             ], 403);
         }
+
+        $search = $request->input('search');
+        $status = $request->input('status');
 
         $requests = TierUpgradeRequest::with([
             'company',
@@ -523,6 +521,31 @@ class CompanyProfileController extends Controller
             'requestedTier',
             'reviewer'
         ])
+        ->when($search, function ($query) use ($search) {
+            $query->where(function ($q) use ($search) {
+
+                $q->where('status', 'LIKE', '%' . $search . '%')
+                ->orWhere('current_tier', 'LIKE', '%' . $search . '%')
+                ->orWhere('requested_tier', 'LIKE', '%' . $search . '%')
+
+                ->orWhereHas('company', function ($companyQuery) use ($search) {
+                    $companyQuery->where('name', 'LIKE', '%' . $search . '%')
+                        ->orWhere('email', 'LIKE', '%' . $search . '%')
+                        ->orWhere('phone', 'LIKE', '%' . $search . '%')
+                        ->orWhere('address', 'LIKE', '%' . $search . '%');
+                })
+                ->orWhereHas('currentTier', function ($tierQuery) use ($search) {
+                    $tierQuery->where('name', 'LIKE', '%' . $search . '%');
+                })
+
+                ->orWhereHas('requestedTier', function ($tierQuery) use ($search) {
+                    $tierQuery->where('name', 'LIKE', '%' . $search . '%');
+                });
+            });
+        })
+        ->when($status, function ($query) use ($status) {
+            $query->where('status', $status);
+        })
         ->latest()
         ->paginate(20);
 
@@ -537,23 +560,16 @@ class CompanyProfileController extends Controller
     {
         $admin = $request->user();
 
-        if (!$admin || $admin->role !== 'admin') {
+        if (!$this->canManageUsers($admin)) {
             return response()->json([
                 'status' => false,
-                'message' => 'Only admins can approve tier upgrades.'
+                'message' => 'You are not authorized to view tier upgrade requests.'
             ], 403);
         }
 
         $validated = $request->validate([
-            'action' => [
-                'required',
-                'in:approve,reject'
-            ],
-            'admin_note' => [
-                'nullable',
-                'string',
-                'max:1000'
-            ],
+            'action' => ['required','in:approve,reject'],
+            'admin_note' => ['nullable', 'string', 'max:1000'],
         ]);
 
         $upgradeRequest = TierUpgradeRequest::with('company')
@@ -573,12 +589,6 @@ class CompanyProfileController extends Controller
             ], 422);
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Reject
-        |--------------------------------------------------------------------------
-        */
-
         if ($validated['action'] === 'reject') {
 
             $upgradeRequest->update([
@@ -594,13 +604,6 @@ class CompanyProfileController extends Controller
                 'data' => $upgradeRequest
             ]);
         }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Approve
-        |--------------------------------------------------------------------------
-        */
-
         $company = $upgradeRequest->company;
 
         if (!$company) {
@@ -609,15 +612,6 @@ class CompanyProfileController extends Controller
                 'message' => 'Company attached to this request was not found.'
             ], 404);
         }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Check documents again before approval
-        |--------------------------------------------------------------------------
-        | This is important because the company may have changed
-        | or removed documents after submitting the request.
-        |--------------------------------------------------------------------------
-        */
 
         if ($upgradeRequest->requested_tier >= 2) {
 
@@ -653,11 +647,6 @@ class CompanyProfileController extends Controller
             }
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Make sure the company's tier has not changed
-        |--------------------------------------------------------------------------
-        */
 
         if ((int) $company->tier !== (int) $upgradeRequest->current_tier) {
 
@@ -667,21 +656,9 @@ class CompanyProfileController extends Controller
             ], 422);
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Update company tier
-        |--------------------------------------------------------------------------
-        */
-
         $company->update([
             'tier' => $upgradeRequest->requested_tier
         ]);
-
-        /*
-        |--------------------------------------------------------------------------
-        | Mark request as approved
-        |--------------------------------------------------------------------------
-        */
 
         $upgradeRequest->update([
             'status' => 'approved',

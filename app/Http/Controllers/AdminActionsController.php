@@ -517,6 +517,11 @@ class AdminActionsController extends Controller
             'pin'      => 'nullable|string|size:4',
             'password' => 'nullable|string|min:8',
             'logo'     => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
+            'bvn'  => 'nullable|int',
+            'nin'  => 'nullable|int',
+            'cac'     => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
+            'mermat'     => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
+            'status_report'     => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
         ]);
 
         if ($validator->fails()) {
@@ -554,6 +559,14 @@ class AdminActionsController extends Controller
                 $companyUpdateData['address'] = $request->address;
             }
 
+            if ($request->has('bvn')) {
+                $companyUpdateData['bvn'] = $request->bvn;
+            }
+
+            if ($request->has('nin')) {
+                $companyUpdateData['nin'] = $request->nin;
+            }
+
             if ($request->has('pin')) {
                 $companyUpdateData['pin'] = Hash::make($request->pin);
             }
@@ -566,6 +579,24 @@ class AdminActionsController extends Controller
                 $logoPath = $request->file('logo')->store('company_logos', 'public');
 
                 $companyUpdateData['logo'] = $logoPath;
+            }
+
+            if ($request->hasFile('cac')) {
+                $cacPath = $request->file('cac')->store('company_cacs', 'public');
+
+                $companyUpdateData['cac'] = $cacPath;
+            }
+
+            if ($request->hasFile('mermat')) {
+                $mermatPath = $request->file('mermat')->store('company_mermats', 'public');
+
+                $companyUpdateData['cac'] = $mermatPath;
+            } 
+            
+            if ($request->hasFile('status_report')) {
+                $statusPath = $request->file('status_report')->store('company_stauss', 'public');
+
+                $companyUpdateData['cac'] = $statusPath;
             }
 
             if (!empty($companyUpdateData)) {
@@ -616,7 +647,7 @@ class AdminActionsController extends Controller
             ], 500);
         }
     }
-    
+
     public function createAccount(Request $request)
     {
         $admin = $request->user();
@@ -631,15 +662,8 @@ class AdminActionsController extends Controller
         if (!$this->isFullAdmin($admin)) {
             return response()->json([
                 'status' => false,
-                'message' => 'Only an admin can create bank account.'
+                'message' => 'Only an admin can create or update bank account.'
             ], 403);
-        }
-
-        if (Account::exists()) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Bank account has already been created. You can update the existing account.'
-            ], 409);
         }
 
         $validated = $request->validate([
@@ -651,16 +675,35 @@ class AdminActionsController extends Controller
         DB::beginTransaction();
 
         try {
+            $account = Account::first();
 
-            $account = Account::create([
-                'account_number' => $validated['account_number'],
-                'bank_name' => $validated['bank_name'],
-                'account_name' => $validated['account_name'],
-            ]);
+            if ($account) {
+
+                $account->update([
+                    'account_number' => $validated['account_number'],
+                    'bank_name' => $validated['bank_name'],
+                    'account_name' => $validated['account_name'],
+                ]);
+
+                $action = 'Admin Updated Bank Account';
+                $message = 'Bank Account updated successfully.';
+                $statusCode = 200;
+
+            } else {
+                $account = Account::create([
+                    'account_number' => $validated['account_number'],
+                    'bank_name' => $validated['bank_name'],
+                    'account_name' => $validated['account_name'],
+                ]);
+
+                $action = 'Admin Created Bank Account';
+                $message = 'Bank Account created successfully.';
+                $statusCode = 201;
+            }
 
             ActivityLog::create([
                 'user_id' => $admin->id,
-                'action' => 'Admin Created Bank Account',
+                'action' => $action,
                 'details' => json_encode([
                     'account_id' => $account->id,
                     'account_number' => $account->account_number,
@@ -674,9 +717,9 @@ class AdminActionsController extends Controller
 
             return response()->json([
                 'status' => true,
-                'message' => 'Bank Account created successfully.',
+                'message' => $message,
                 'data' => $account
-            ], 201);
+            ], $statusCode);
 
         } catch (\Exception $e) {
 
@@ -684,7 +727,7 @@ class AdminActionsController extends Controller
 
             return response()->json([
                 'status' => false,
-                'message' => 'Bank Account creation failed.',
+                'message' => 'Bank Account operation failed.',
                 'error' => $e->getMessage()
             ], 500);
         }
