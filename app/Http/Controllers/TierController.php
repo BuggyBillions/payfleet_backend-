@@ -92,14 +92,41 @@ class TierController extends Controller
         }
     }
 
+    private function isStaff(User $user): bool
+    {
+        return (
+            $user->role === 'finance'
+        );
+    }
+
+    private function isSupport(User $user): bool
+    {
+        return (
+            $user->role === 'support'
+        );
+    }
+
+    private function canManageUsers(User $user): bool
+    {
+        return ($user->is_active == 1 &&
+            (
+                $this->isFullAdmin($user) ||
+                $this->isStaff($user) || 
+                $this->isSupport($user)
+            )
+        );
+    }
+
     public function getTier( Request $request): JsonResponse {
         $admin = $request->user();
-        if (!$this->isFullAdmin($admin)) {
+
+        if (!$this->canManageUsers($admin)) {
             return response()->json([
                 'status' => false,
-                'message' => 'Unauthorized.'
+                'message' => 'You are not authorized to view tier upgrade requests.'
             ], 403);
         }
+        
         $search = $request->input('search');
         
         $query = Tier::query()

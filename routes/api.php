@@ -78,7 +78,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('my-company-stats',  [CompanyProfileController::class, 'myCompanyStats']);
     Route::post('move-tier', [CompanyProfileController::class, 'moveTier']);
     Route::get('tier-requests', [CompanyProfileController::class, 'tierUpgradeRequests']);
-    Route::get('review-tier-upgrade/{id}', [CompanyProfileController::class, 'reviewTierUpgrade']);
+    Route::post('review-tier-upgrade/{id}', [CompanyProfileController::class, 'reviewTierUpgrade']);
 
 
     // funding

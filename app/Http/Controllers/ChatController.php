@@ -65,7 +65,7 @@ class ChatController extends Controller
         $receiverId = Message::query()
             ->where('receiver_id', $user->id)
             ->whereHas('sender', function ($query) {
-                $query->whereIn('role', ['admin','support',])
+                $query->whereIn('role', ['admin','support','finance'])
                 ->where('is_active', 1)
                 ->where('is_verified', 1);
             })
@@ -74,7 +74,7 @@ class ChatController extends Controller
 
         if (!$receiverId) {
             $receiverId = User::query()
-                ->whereIn('role', ['support'])
+                ->whereIn('role', ['support','admin','finance'])
                 ->where('is_active', 1)
                 ->where('is_verified', 1)
                 ->value('id');
