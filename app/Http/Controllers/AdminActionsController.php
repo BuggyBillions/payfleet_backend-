@@ -261,13 +261,6 @@ class AdminActionsController extends Controller
         $search = $request->input('search');
         $role = $request->input('role', 'all');
 
-        if (!in_array($role, ['admin', 'finance', 'support'])) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Invalid role. Use finance, support, or all.'
-            ], 422);
-        }
-
         $query = User::query()
             ->whereIn('role', ['finance', 'support'])
 

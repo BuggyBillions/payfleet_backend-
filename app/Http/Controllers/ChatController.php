@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Auth;
 
 class ChatController extends Controller
 {
-    private const DEFAULT_WELCOME_MESSAGE = 'Hi 👋 Welcome to Go4Bill Support. How can we help you today?';
+    private const DEFAULT_WELCOME_MESSAGE = 'Hi 👋 Welcome to Payfleet Support. How can we help you today?';
 
     public function getUserMessages(): JsonResponse
     {
@@ -33,8 +33,8 @@ class ChatController extends Controller
                     ->orWhere('receiver_id', $user->id);
             })
             ->with([
-                'sender:id,first_name,last_name,role',
-                'receiver:id,first_name,last_name,role',
+                'sender:id,name,email,role',
+                'receiver:id,name,email,role',
             ])
             ->orderBy('created_at', 'asc')
             ->get();
@@ -65,7 +65,7 @@ class ChatController extends Controller
         $receiverId = Message::query()
             ->where('receiver_id', $user->id)
             ->whereHas('sender', function ($query) {
-                $query->whereIn('role', ['admin','staff',])
+                $query->whereIn('role', ['admin','support',])
                 ->where('is_active', 1)
                 ->where('is_verified', 1);
             })
@@ -74,7 +74,7 @@ class ChatController extends Controller
 
         if (!$receiverId) {
             $receiverId = User::query()
-                ->whereIn('role', ['admin','staff',])
+                ->whereIn('role', ['support'])
                 ->where('is_active', 1)
                 ->where('is_verified', 1)
                 ->value('id');
@@ -375,7 +375,7 @@ class ChatController extends Controller
         }
 
         $admin = User::query()
-            ->whereIn('role', ['admin','staff',])
+            ->whereIn('role', ['support'])
             ->where('is_active', 1)
             ->where('is_verified', 1)
             ->first();
