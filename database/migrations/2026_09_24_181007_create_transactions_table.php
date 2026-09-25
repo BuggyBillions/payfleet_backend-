@@ -22,7 +22,7 @@ return new class extends Migration
             $table->decimal('current_balance', 15, 2)->default(0);
             $table->enum('type', ['credit','debit']);
             $table->string('transaction_type');
-            $table->enum('status', ['pending','successful','failed'])->default('successful');
+            $table->enum('status', ['pending','successful','failed','declined'])->default('pending');
             $table->text('description')->nullable();
             $table->timestamps();
         });

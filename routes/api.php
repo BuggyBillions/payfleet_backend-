@@ -5,6 +5,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CompanyFundController;
 use App\Http\Controllers\CompanyProfileController;
 use App\Http\Controllers\EmployeeController;
+use App\Http\Controllers\TierController;
 use App\Models\Employee;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -49,10 +50,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('deactivate-users/{id}', [AdminActionsController::class, 'deactivateUser']);
     Route::patch('activate-users/{id}', [AdminActionsController::class, 'activateUser']);
     Route::delete('delete-users/{id}',[AdminActionsController::class, 'deleteUser']);
-    Route::get('all-deposit', [CompanyFundController::class, 'getDeposit']);
-    Route::get('each-deposit/{id}', [CompanyFundController::class, 'eachDeposit']);
-    Route::post('confirm-deposit/{id}',[AdminActionsController::class, 'confirmDeposit']);
-    Route::put('update-staff/{id}', [AdminActionsController::class , 'updateOfficer']);
     Route::get('admin-activity-log', [AdminActionsController::class, 'adminActivityLogs']);
     Route::get('admin-notifications', [AdminActionsController::class, 'adminNotifications']);
     Route::get('each-admin-activity/{id}', [AdminActionsController::class, 'getSingleActivity']);
@@ -82,4 +79,22 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('get-account', [AdminActionsController::class, 'getAccount']);
     Route::get('all-banks', [CompanyFundController::class, 'listBanks']);
     Route::post('resolve-account', [CompanyFundController::class, 'resolveBankAccount']);
+}); 
+
+// finance
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('all-deposit', [CompanyFundController::class, 'getDeposit']);
+    Route::get('each-deposit/{id}', [CompanyFundController::class, 'eachDeposit']);
+    Route::post('confirm-deposit/{id}',[AdminActionsController::class, 'confirmDeposit']);
+    Route::put('update-staff/{id}', [AdminActionsController::class , 'updateOfficer']);
+    Route::put('decline-deposit/{id}',[AdminActionsController::class, 'declineDeposit']);
+});
+
+// tier
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('create-tier', [TierController::class, 'createTier']);
+    Route::get('all-tiers', [TierController::class, 'getTier']);
+    Route::get('each-tiers/{id}', [TierController::class, 'eachTier']);
+    Route::delete('delete-tiers/{id}', [TierController::class, 'deleteTier']);
+    Route::put('update-tier/{id}', [TierController::class, 'updateTier']);
 });
