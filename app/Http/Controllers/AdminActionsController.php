@@ -23,7 +23,7 @@ class AdminActionsController extends Controller
     {
         $admin = $request->user();
 
-        if(!$this->canManageUsers($admin)){
+        if (!$this->canManageUsers($admin)) {
             return response()->json([
                 'status'  => false,
                 'message' => 'Unauthorized.'
@@ -32,7 +32,7 @@ class AdminActionsController extends Controller
 
         $search = $request->input('search');
 
-        $companies = Company::with('user')
+        $companies = Company::with(['user','tier'])
             ->withCount(['employees as no_of_employee'])
             ->when($search, function ($query) use ($search) {
                 $query->where(function ($q) use ($search) {
@@ -46,9 +46,9 @@ class AdminActionsController extends Controller
             ->paginate(20);
 
         return response()->json([
-            'status' => true,
+            'status'  => true,
             'message' => 'Companies fetched successfully',
-            'data' => $companies
+            'data'    => $companies
         ], 200);
     }
 
@@ -62,7 +62,7 @@ class AdminActionsController extends Controller
             ], 403);
         }
 
-        $companies = Company::with('user')
+        $companies = Company::with(['user', 'tier'])
             ->where('id', $id)
             ->withCount(['employees as no_of_employee'])
             ->first();
@@ -247,19 +247,35 @@ class AdminActionsController extends Controller
         }
     }
 
-    public function getStaff( Request $request): JsonResponse {
+    public function getStaff(Request $request): JsonResponse
+    {
         $admin = $request->user();
+
         if (!$this->isFullAdmin($admin)) {
             return response()->json([
                 'status' => false,
                 'message' => 'Unauthorized.'
             ], 403);
         }
+
         $search = $request->input('search');
-        
+        $role = $request->input('role', 'all');
+
+        if (!in_array($role, ['admin', 'finance', 'support'])) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Invalid role. Use finance, support, or all.'
+            ], 422);
+        }
+
         $query = User::query()
             ->whereIn('role', ['finance', 'support'])
-             ->when($search, function ($query) use ($search) {
+
+            ->when($role !== 'all', function ($query) use ($role) {
+                $query->where('role', $role);
+            })
+
+            ->when($search, function ($query) use ($search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'LIKE', '%' . $search . '%')
                         ->orWhere('email', 'LIKE', '%' . $search . '%')
@@ -268,15 +284,25 @@ class AdminActionsController extends Controller
                         ->orWhere('is_active', 'LIKE', '%' . $search . '%');
                 });
             })
-            ->select(['id','name','email','phone','role','is_verified','is_active','is_verified','created_at']);
+
+            ->select([
+                'id',
+                'name',
+                'email',
+                'phone',
+                'role',
+                'is_verified',
+                'is_active',
+                'created_at'
+            ]);
 
         $staff = $query
             ->latest()
-            ->paginate($request->get('per_page',20 ));
+            ->paginate($request->get('per_page', 20));
 
         return response()->json([
             'status' => true,
-            'message' =>'Staff fetched successfully.',
+            'message' => 'Staff fetched successfully.',
             'data' => $staff
         ]);
     }
@@ -598,8 +624,9 @@ class AdminActionsController extends Controller
         }
     }
 
-    public function createAccount(Request $request){
-        $admin  =  $request->user();
+    public function createAccount(Request $request)
+    {
+        $admin = $request->user();
 
         if (!$admin) {
             return response()->json([
@@ -615,27 +642,37 @@ class AdminActionsController extends Controller
             ], 403);
         }
 
+        if (Account::exists()) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Bank account has already been created. You can update the existing account.'
+            ], 409);
+        }
+
         $validated = $request->validate([
-            'account_number' => [ 'required', 'max:15'],
-            'bank_name' => [ 'required'],
-            'account_name' => [ 'required', 'string'],
+            'account_number' => ['required', 'string', 'max:15'],
+            'bank_name' => ['required', 'string', 'max:255'],
+            'account_name' => ['required', 'string', 'max:255'],
         ]);
 
         DB::beginTransaction();
+
         try {
-            $user = Account::create([
-                'account_number' =>$validated['account_number'],
-                'bank_name' =>$validated['bank_name'],
-                'account_name' =>$validated['account_name'],
+
+            $account = Account::create([
+                'account_number' => $validated['account_number'],
+                'bank_name' => $validated['bank_name'],
+                'account_name' => $validated['account_name'],
             ]);
 
             ActivityLog::create([
                 'user_id' => $admin->id,
-                'action' =>'Admin Created Bank account',
+                'action' => 'Admin Created Bank Account',
                 'details' => json_encode([
-                    'created_finance_id' => $user->id,
-                    'email' => $user->email,
-                    'role' => $user->role,
+                    'account_id' => $account->id,
+                    'account_number' => $account->account_number,
+                    'bank_name' => $account->bank_name,
+                    'account_name' => $account->account_name,
                 ]),
                 'type' => 'admin',
             ]);
@@ -644,17 +681,18 @@ class AdminActionsController extends Controller
 
             return response()->json([
                 'status' => true,
-                'message' =>'Bank Account created successfully.',
-                'data' =>  $user
+                'message' => 'Bank Account created successfully.',
+                'data' => $account
             ], 201);
 
         } catch (\Exception $e) {
+
             DB::rollBack();
+
             return response()->json([
                 'status' => false,
                 'message' => 'Bank Account creation failed.',
-                'error' =>  $e->getMessage()
-
+                'error' => $e->getMessage()
             ], 500);
         }
     }

@@ -50,4 +50,9 @@ class Company extends Model
     {
         return $this->belongsTo(Transaction::class, 'company_id');
     }
+
+    public function tier()
+    {
+        return $this->belongsTo(Tier::class, 'tier');
+    }
 }

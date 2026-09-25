@@ -53,4 +53,10 @@ class User extends Authenticatable
     {
         return $this->hasOne(Company::class);
     }
+
+    public function tier()
+    {
+        return $this->belongsTo(Tier::class, 'tiers');
+    }
 }
+
