@@ -106,13 +106,21 @@ class TierController extends Controller
         );
     }
 
+    private function isCompany(User $user): bool
+    {
+        return (
+            $user->role === 'company'
+        );
+    }
+
     private function canManageUsers(User $user): bool
     {
         return ($user->is_active == 1 &&
             (
                 $this->isFullAdmin($user) ||
                 $this->isStaff($user) || 
-                $this->isSupport($user)
+                $this->isSupport($user) ||
+                $this->isCompany($user)
             )
         );
     }
@@ -126,7 +134,7 @@ class TierController extends Controller
                 'message' => 'You are not authorized to view tier upgrade requests.'
             ], 403);
         }
-        
+
         $search = $request->input('search');
         
         $query = Tier::query()
