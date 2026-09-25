@@ -52,6 +52,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('all-deposit', [CompanyFundController::class, 'getDeposit']);
     Route::get('each-deposit/{id}', [CompanyFundController::class, 'eachDeposit']);
     Route::post('confirm-deposit/{id}',[AdminActionsController::class, 'confirmDeposit']);
+    Route::put('update-staff/{id}', [AdminActionsController::class , 'updateOfficer']);
+    Route::get('admin-activity-log', [AdminActionsController::class, 'adminActivityLogs']);
+    Route::get('admin-notifications', [AdminActionsController::class, 'adminNotifications']);
+    Route::get('each-admin-activity/{id}', [AdminActionsController::class, 'getSingleActivity']);
+    Route::get('each-admin-notification/{id}', [AdminActionsController::class, 'getSingleNotification']);
 });
 
 // companies
@@ -63,7 +68,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('delete-employee/{id}', [EmployeeController::class, 'destroy']);
     Route::put('single-paying/{id}', [EmployeeController::class, 'togglePaying']);
     Route::put('multiple-paying', [EmployeeController::class, 'updateMultiplePaying']);
-    Route::put('update-company-details', [AdminActionsController::class, 'UpdateProfile']);
+    Route::put('update-company-details', [AdminActionsController::class, 'UpdateCompanyProfile']);
+    Route::get('company-deposit', [CompanyFundController::class, 'getCompanyDeposit']);
+    Route::get('each-company-deposit/{id}', [CompanyFundController::class, 'getCompanyDepositDetails']);
+    Route::get('company-activity-logs', [CompanyProfileController::class, 'activityLogs']);
+    Route::get('company-notifications', [CompanyProfileController::class, 'notifications']);
+    Route::patch('read-notification/{id}', [CompanyProfileController::class, 'markAsRead']);
 
 
     // funding

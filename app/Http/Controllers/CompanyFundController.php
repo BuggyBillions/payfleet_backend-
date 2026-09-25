@@ -343,4 +343,97 @@ class CompanyFundController extends Controller
             'data'      => $deposits
         ]);
     }
+
+    public function getCompanyDeposit(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        $company = Company::where('user_id', $user->id)->first();
+
+        if (!$company) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Company account not found.'
+            ], 404);
+        }
+
+        $search = $request->input('search');
+
+        $deposits = Deposit::with([
+                'transaction',
+                'company'
+            ])
+            ->where('company_id', $company->id)
+            ->when($search, function ($query) use ($search) {
+
+                $query->where(function ($q) use ($search) {
+
+                    $q->where('amount', 'LIKE', '%' . $search . '%')
+                        ->orWhereHas('transaction', function ($transactionQuery) use ($search) {
+                            $transactionQuery
+                                ->where('reference', 'LIKE', '%' . $search . '%')
+                                ->orWhere('status', 'LIKE', '%' . $search . '%')
+                                ->orWhere('transaction_type', 'LIKE', '%' . $search . '%')
+                                ->orWhere('description', 'LIKE', '%' . $search . '%');
+                        });
+                });
+            })
+            ->latest()
+            ->paginate(20);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Company deposits fetched successfully.',
+            'data' => $deposits
+        ], 200);
+    }
+
+    public function getCompanyDepositDetails(Request $request, $id)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        $company = Company::where('user_id', $user->id)->first();
+
+        if (!$company) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Company account not found.'
+            ], 404);
+        }
+
+        $deposit = Deposit::with([
+                'transaction',
+                'company'
+            ])
+            ->where('id', $id)
+            ->where('company_id', $company->id)
+            ->first();
+
+        if (!$deposit) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Deposit not found.'
+            ], 404);
+        }
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Deposit details fetched successfully.',
+            'data' => $deposit
+        ], 200);
+    }
 }

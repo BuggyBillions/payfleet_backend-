@@ -268,4 +268,90 @@ class CompanyProfileController extends Controller
             'message' => 'Password reset successfully.'
         ]);
     }
+
+    public function activityLogs(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $perPage = $request->get('per_page', 20);
+
+        $logs = ActivityLog::select(
+                'id',
+                'action',
+                'details',
+                'type',
+                'created_at'
+            )
+            ->where('user_id', $user->id)
+            ->orderByDesc('id')
+            ->paginate($perPage);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Activity logs fetched successfully',
+            'data' => $logs->items(),
+            'pagination' => [
+                'current_page' => $logs->currentPage(),
+                'last_page' => $logs->lastPage(),
+                'per_page' => $logs->perPage(),
+                'total' => $logs->total(),
+                'has_more_pages' => $logs->hasMorePages(),
+            ]
+        ]);
+    }
+
+    public function notifications(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $perPage = $request->get('per_page', 20);
+
+        $logs = Notification::select(
+                'id',
+                'title',
+                'message',
+                'type',
+                'is_read',
+                'created_at'
+            )
+            ->where('user_id', $user->id)
+            ->orderByDesc('id')
+            ->paginate($perPage);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Notifications  fetched successfully',
+            'data' => $logs->items(),
+            'pagination' => [
+                'current_page' => $logs->currentPage(),
+                'last_page' => $logs->lastPage(),
+                'per_page' => $logs->perPage(),
+                'total' => $logs->total(),
+                'has_more_pages' => $logs->hasMorePages(),
+            ]
+        ]);
+    }
+
+    public function markAsRead($id)
+    {
+        $notification = Notification::where('id', $id)
+            ->where('user_id', auth()->id())
+            ->first();
+
+        if (!$notification) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Notification not found'
+            ], 404);
+        }
+
+        $notification->update([
+            'is_read' => true
+        ]);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Notification marked as read'
+        ]);
+    }
 }

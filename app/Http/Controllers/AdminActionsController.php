@@ -469,52 +469,133 @@ class AdminActionsController extends Controller
         }
     }
 
-    public function updateProfile(Request $request)
+    public function updateCompanyProfile(Request $request)
     {
-        $company = $request->user();
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthorized.'
+            ], 401);
+        }
+
+        $company = Company::where('user_id', $user->id)->first();
 
         if (!$company) {
-            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+            return response()->json([
+                'status' => false,
+                'message' => 'Company account not found.'
+            ], 404);
         }
 
         $validator = Validator::make($request->all(), [
+            'name'     => 'nullable|string|max:255',
+            'email'    => 'nullable|email|max:255|unique:companies,email,' . $company->id,
+            'phone'    => 'nullable|string|max:50|unique:companies,phone,' . $company->id,
+            'about'    => 'nullable|string',
             'address'  => 'nullable|string',
             'pin'      => 'nullable|string|size:4',
             'password' => 'nullable|string|min:8',
+            'logo'     => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
         ]);
 
         if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $updateData = [];
-
-        if ($request->has('address')) {
-            $updateData['address'] = $request->address;
-        }
-
-        if ($request->has('pin')) {
-            $updateData['pin'] = Hash::make($request->pin);
-        }
-
-        if ($request->has('password')) {
-            $updateData['password'] = Hash::make($request->password);
-        }
-
-        if (empty($updateData)) {
             return response()->json([
-                'success' => false,
-                'message' => 'No valid fields provided for update.'
-            ], 400);
+                'status' => false,
+                'errors' => $validator->errors()
+            ], 422);
         }
 
-        $company->update($updateData);
+        DB::beginTransaction();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Company profile updated successfully.',
-            'company' => $company
-        ]);
+        try {
+
+            $companyUpdateData = [];
+            $userUpdateData = [];
+
+            if ($request->has('name')) {
+                $companyUpdateData['name'] = $request->name;
+            }
+
+            if ($request->has('email')) {
+                $companyUpdateData['email'] = $request->email;
+                $userUpdateData['email'] = $request->email;
+            }
+
+            if ($request->has('phone')) {
+                $companyUpdateData['phone'] = $request->phone;
+            }
+
+            if ($request->has('about')) {
+                $companyUpdateData['about'] = $request->about;
+            }
+
+            if ($request->has('address')) {
+                $companyUpdateData['address'] = $request->address;
+            }
+
+            if ($request->has('pin')) {
+                $companyUpdateData['pin'] = Hash::make($request->pin);
+            }
+
+            if ($request->has('password')) {
+                $userUpdateData['password'] = Hash::make($request->password);
+            }
+
+            if ($request->hasFile('logo')) {
+                $logoPath = $request->file('logo')->store('company_logos', 'public');
+
+                $companyUpdateData['logo'] = $logoPath;
+            }
+
+            if (!empty($companyUpdateData)) {
+                $company->update($companyUpdateData);
+            }
+
+            if (!empty($userUpdateData)) {
+                $user->update($userUpdateData);
+            }
+
+            DB::commit();
+
+            $company->refresh();
+            $user->refresh();
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Company profile updated successfully.',
+                'data' => [
+                    'company' => [
+                        'id' => $company->id,
+                        'name' => $company->name,
+                        'email' => $company->email,
+                        'phone' => $company->phone,
+                        'about' => $company->about,
+                        'address' => $company->address,
+                        'logo' => $company->logo
+                            ? asset('storage/' . $company->logo)
+                            : null,
+                        'balance' => $company->balance,
+                    ],
+                    'user' => [
+                        'id' => $user->id,
+                        'name' => $user->name,
+                        'email' => $user->email,
+                    ]
+                ]
+            ], 200);
+
+        } catch (\Exception $e) {
+
+            DB::rollBack();
+
+            return response()->json([
+                'status' => false,
+                'message' => 'Company profile update failed.',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function createAccount(Request $request){
@@ -700,5 +781,282 @@ class AdminActionsController extends Controller
                 'error'   => $e->getMessage(),
             ], 500);
         }
+    }
+
+    public function updateOfficer(Request $request, $id): JsonResponse
+    {
+        $admin = $request->user();
+
+        if (!$admin) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthenticated. Please login again.'
+            ], 401);
+        }
+
+        if (!$this->isFullAdmin($admin)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Only an admin can update Finance or Support Officers.'
+            ], 403);
+        }
+
+        $user = User::whereIn('role', ['finance', 'support'])
+            ->where('id', $id)
+            ->first();
+
+        if (!$user) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Finance or Support Officer not found.'
+            ], 404);
+        }
+
+        $validated = $request->validate([
+            'name' => ['sometimes','required','string','max:255','unique:users,name,' . $user->id],
+            'email' => ['sometimes','required','email','max:255','unique:users,email,' . $user->id],
+            'phone' => ['sometimes','required','string','max:50','unique:users,phone,' . $user->id],
+            'password' => ['sometimes','nullable','string','min:8'],
+            'is_active' => ['sometimes', 'boolean'],
+        ]);
+
+        DB::beginTransaction();
+
+        try {
+            $oldData = [
+                'name' => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone,
+                'role' => $user->role,
+                'is_active' => $user->is_active,
+            ];
+
+            if (isset($validated['name'])) {
+                $user->name = $validated['name'];
+            }
+
+            if (isset($validated['email'])) {
+                $user->email = $validated['email'];
+            }
+
+            if (isset($validated['phone'])) {
+                $user->phone = $validated['phone'];
+            }
+
+            if (isset($validated['is_active'])) {
+                $user->is_active = $validated['is_active'];
+            }
+
+            if (!empty($validated['password'])) {
+                $user->password = Hash::make($validated['password']);
+            }
+
+            $user->save();
+
+            ActivityLog::create([
+                'user_id' => $admin->id,
+                'action' => 'Admin Updated Officer',
+                'details' => json_encode([
+                    'updated_user_id' => $user->id,
+                    'role' => $user->role,
+                    'old_data' => $oldData,
+                    'updated_data' => [
+                        'name' => $user->name,
+                        'email' => $user->email,
+                        'phone' => $user->phone,
+                        'is_active' => $user->is_active,
+                        'password_changed' => !empty($validated['password']),
+                    ],
+                ]),
+                'type' => 'admin',
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'status' => true,
+                'message' => ucfirst($user->role) . ' officer updated successfully.',
+                'data' => $user
+            ], 200);
+
+        } catch (\Exception $e) {
+
+            DB::rollBack();
+
+            return response()->json([
+                'status' => false,
+                'message' => 'Officer update failed.',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function adminActivityLogs(Request $request): JsonResponse
+    {
+        $admin = $request->user();
+
+        if (!$admin) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthenticated. Please login again.'
+            ], 401);
+        }
+
+        $query = ActivityLog::query();
+
+        if ($request->filled('search')) {
+            $query->where(function ($q) use ($request) {
+                $q->where('action', 'like', "%{$request->search}%")
+                ->orWhere('details', 'like', "%{$request->search}%");
+            });
+        }
+
+        if ($request->filled('user_id')) {
+            $query->where('user_id', $request->user_id);
+        }
+
+        if ($request->filled('type')) {
+            $query->where('type', $request->type);
+        }
+
+        if ($request->filled('from') && $request->filled('to')) {
+            $query->whereBetween('created_at', [
+                $request->from,
+                $request->to
+            ]);
+        }
+        
+        $logs = $query
+            ->with('user:id,name,phone,email,role')
+            ->orderByDesc('id')
+            ->paginate(20);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Activity logs fetched successfully',
+            'data' => $logs
+        ]);
+    }
+
+    public function adminNotifications(Request $request): JsonResponse
+    {
+        $admin = $request->user();
+
+        if (!$admin) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthenticated. Please login again.'
+            ], 401);
+        }
+
+        $query = Notification::query();
+
+        if ($request->filled('search')) {
+            $query->where(function ($q) use ($request) {
+                $q->where('title', 'like', "%{$request->search}%")
+                ->orWhere('message', 'like', "%{$request->search}%");
+            });
+        }
+
+        if ($request->filled('user_id')) {
+            $query->where('user_id', $request->user_id);
+        }
+
+        if ($request->filled('type')) {
+            $query->where('type', $request->type);
+        }
+
+        if ($request->filled('from') && $request->filled('to')) {
+            $query->whereBetween('created_at', [
+                $request->from,
+                $request->to
+            ]);
+        }
+        
+        $logs = $query
+            ->with('user:id,name,phone,email,role')
+            ->orderByDesc('id')
+            ->paginate(20);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Notificatiions fetched successfully',
+            'data' => $logs
+        ]);
+    }
+
+    public function getSingleActivity(Request $request, $id): JsonResponse
+    {
+        $admin = $request->user();
+        if (!$admin) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthenticated. Please login again.'
+            ], 401);
+        }
+
+        if (!$this->canManageUsers($admin)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthorized.'
+            ], 403);
+        }
+
+        $activity = ActivityLog::query()
+            ->where('id', $id)
+            ->with([ 'user:id,name,email,phone,role']);
+
+        $activity = $activity->first();
+
+        if (!$activity) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Activity not found.'
+            ], 404);
+        }
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Activity fetched successfully.',
+            'data' => $activity
+        ], 200);
+    }
+
+    public function getSingleNotification(Request $request, $id): JsonResponse
+    {
+        $admin = $request->user();
+        if (!$admin) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthenticated. Please login again.'
+            ], 401);
+        }
+
+        if (!$this->canManageUsers($admin)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthorized.'
+            ], 403);
+        }
+
+        $notification = Notification::query()
+            ->where('id', $id)
+            ->with([ 'user:id,name,email,phone,role']);
+
+
+        $notification = $notification->first();
+
+        if (!$notification) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Activity not found.'
+            ], 404);
+        }
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Notification fetched successfully.',
+            'data' => $notification
+        ], 200);
     }
 }
