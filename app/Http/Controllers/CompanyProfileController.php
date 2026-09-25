@@ -6,6 +6,7 @@ use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use App\Models\Company;
+use App\Models\Employee;
 use App\Models\Notification;
 use App\Models\PasswordResetToken;
 use App\Models\User;
@@ -14,6 +15,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use App\Models\Tier;
+use App\Models\TierUpgradeRequest;
 
 class CompanyProfileController extends Controller
 {
@@ -359,30 +362,397 @@ class CompanyProfileController extends Controller
         return $user->role === 'company';
     } 
 
-    public function moveTier(Request $request)
+    public function moveTier(Request $request): JsonResponse
     {
-        $user =  $request->user();
-        $admin =  $request->user();
+        $user = $request->user();
 
-        if(!$admin){
+        if (!$user) {
             return response()->json([
-                'status'    =>    false,
-                'message'   =>   'Unauthorized for this endpoint.'
-            ]);
+                'status' => false,
+                'message' => 'Unauthorized.'
+            ], 401);
         }
 
-        if(!$this->isFullCompany($admin)){
+        // Only company accounts can request an upgrade
+        if (!$this->isFullCompany($user)) {
             return response()->json([
-                'status'    =>  false,
-                'message'   =>  "Only Company can fund account"
+                'status' => false,
+                'message' => 'Only company accounts can request a tier upgrade.'
             ], 403);
         }
 
-        $company  = Company::where('user_id', $user->id)->first();
-        
-        $validated  = $request->validate([
-            'amount'       => ['required'],
-            'company_id'   => ['required'],
+        $company = Company::where('user_id', $user->id)->first();
+
+        if (!$company) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Company not found.'
+            ], 404);
+        }
+
+        $validated = $request->validate([
+            'requested_tier' => [
+                'required',
+                'integer',
+                'exists:tiers,id'
+            ],
         ]);
+
+        $currentTier = (int) $company->tier;
+        $requestedTier = (int) $validated['requested_tier'];
+
+        /*
+        |--------------------------------------------------------------------------
+        | Make sure they are actually moving forward
+        |--------------------------------------------------------------------------
+        */
+
+        if ($requestedTier <= $currentTier) {
+            return response()->json([
+                'status' => false,
+                'message' => 'You can only upgrade to a higher tier.'
+            ], 422);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Check if there is already a pending request
+        |--------------------------------------------------------------------------
+        */
+
+        $existingRequest = TierUpgradeRequest::where(
+            'company_id',
+            $company->id
+        )
+        ->where('status', 'pending')
+        ->first();
+
+        if ($existingRequest) {
+            return response()->json([
+                'status' => false,
+                'message' => 'You already have a pending tier upgrade request.'
+            ], 422);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Tier 2 Requirements
+        |--------------------------------------------------------------------------
+        */
+
+        if ($requestedTier >= 2) {
+
+            if (empty($company->bvn)) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'BVN is required before upgrading to Tier 2.'
+                ], 422);
+            }
+
+            if (empty($company->nin)) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'NIN is required before upgrading to Tier 2.'
+                ], 422);
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Tier 3 Requirements
+        |--------------------------------------------------------------------------
+        */
+
+        if ($requestedTier >= 3) {
+
+            if (empty($company->memart)) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'MEMART is required before upgrading to Tier 3.'
+                ], 422);
+            }
+
+            if (empty($company->cac)) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'CAC is required before upgrading to Tier 3.'
+                ], 422);
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Create upgrade request
+        |--------------------------------------------------------------------------
+        */
+
+        $upgradeRequest = TierUpgradeRequest::create([
+            'company_id' => $company->id,
+            'current_tier' => $currentTier,
+            'requested_tier' => $requestedTier,
+            'status' => 'pending',
+        ]);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Tier upgrade request submitted successfully. Waiting for admin approval.',
+            'data' => [
+                'id' => $upgradeRequest->id,
+                'company_id' => $company->id,
+                'current_tier' => $currentTier,
+                'requested_tier' => $requestedTier,
+                'status' => $upgradeRequest->status,
+            ]
+        ], 201);
+    }
+
+    public function tierUpgradeRequests(Request $request): JsonResponse
+    {
+        $admin = $request->user();
+
+        if (!$admin || $admin->role !== 'admin') {
+            return response()->json([
+                'status' => false,
+                'message' => 'Only admins can view tier upgrade requests.'
+            ], 403);
+        }
+
+        $requests = TierUpgradeRequest::with([
+            'company',
+            'currentTier',
+            'requestedTier',
+            'reviewer'
+        ])
+        ->latest()
+        ->paginate(20);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Tier upgrade requests fetched successfully.',
+            'data' => $requests
+        ]);
+    }
+
+    public function reviewTierUpgrade(Request $request, $id): JsonResponse
+    {
+        $admin = $request->user();
+
+        if (!$admin || $admin->role !== 'admin') {
+            return response()->json([
+                'status' => false,
+                'message' => 'Only admins can approve tier upgrades.'
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'action' => [
+                'required',
+                'in:approve,reject'
+            ],
+            'admin_note' => [
+                'nullable',
+                'string',
+                'max:1000'
+            ],
+        ]);
+
+        $upgradeRequest = TierUpgradeRequest::with('company')
+            ->find($id);
+
+        if (!$upgradeRequest) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Tier upgrade request not found.'
+            ], 404);
+        }
+
+        if ($upgradeRequest->status !== 'pending') {
+            return response()->json([
+                'status' => false,
+                'message' => 'This tier upgrade request has already been reviewed.'
+            ], 422);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Reject
+        |--------------------------------------------------------------------------
+        */
+
+        if ($validated['action'] === 'reject') {
+
+            $upgradeRequest->update([
+                'status' => 'rejected',
+                'reviewed_by' => $admin->id,
+                'reviewed_at' => now(),
+                'admin_note' => $validated['admin_note'] ?? null,
+            ]);
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Tier upgrade request rejected successfully.',
+                'data' => $upgradeRequest
+            ]);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Approve
+        |--------------------------------------------------------------------------
+        */
+
+        $company = $upgradeRequest->company;
+
+        if (!$company) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Company attached to this request was not found.'
+            ], 404);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Check documents again before approval
+        |--------------------------------------------------------------------------
+        | This is important because the company may have changed
+        | or removed documents after submitting the request.
+        |--------------------------------------------------------------------------
+        */
+
+        if ($upgradeRequest->requested_tier >= 2) {
+
+            if (empty($company->bvn)) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Cannot approve. Company BVN is missing.'
+                ], 422);
+            }
+
+            if (empty($company->nin)) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Cannot approve. Company NIN is missing.'
+                ], 422);
+            }
+        }
+
+        if ($upgradeRequest->requested_tier >= 3) {
+
+            if (empty($company->memart)) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Cannot approve. Company MEMART is missing.'
+                ], 422);
+            }
+
+            if (empty($company->cac)) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Cannot approve. Company CAC is missing.'
+                ], 422);
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Make sure the company's tier has not changed
+        |--------------------------------------------------------------------------
+        */
+
+        if ((int) $company->tier !== (int) $upgradeRequest->current_tier) {
+
+            return response()->json([
+                'status' => false,
+                'message' => 'Company tier has changed since this request was created. Please submit a new request.'
+            ], 422);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Update company tier
+        |--------------------------------------------------------------------------
+        */
+
+        $company->update([
+            'tier' => $upgradeRequest->requested_tier
+        ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Mark request as approved
+        |--------------------------------------------------------------------------
+        */
+
+        $upgradeRequest->update([
+            'status' => 'approved',
+            'reviewed_by' => $admin->id,
+            'reviewed_at' => now(),
+            'admin_note' => $validated['admin_note'] ?? null,
+        ]);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Tier upgrade approved successfully.',
+            'data' => [
+                'company_id' => $company->id,
+                'previous_tier' => $upgradeRequest->current_tier,
+                'new_tier' => $company->tier,
+                'status' => 'approved',
+            ]
+        ]);
+    }
+
+    public function myCompanyStats(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        if (!$this->isFullCompany($user)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Only company accounts can access this endpoint.'
+            ], 403);
+        }
+
+        $company = Company::where('user_id', $user->id)->first();
+
+        if (!$company) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Company not found.'
+            ], 404);
+        }
+        $noOfEmployees = Employee::where(
+            'company_id',
+            $company->id
+        )->count();
+
+        $balance = $company->balance ?? 0;
+
+        $estimatedSalary = Employee::where(
+            'company_id',
+            $company->id
+        )->sum('estimate_pay');
+        
+        $totalPaid = 0;
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Company statistics fetched successfully.',
+            'data' => [
+                'company_id' => $company->id,
+                'company_name' => $company->name,
+                'no_of_employee' => $noOfEmployees,
+                'estimated_salary' => $estimatedSalary,
+                'balance' => $balance,
+                'total_paid' => $totalPaid,
+            ]
+        ], 200);
     }
 }

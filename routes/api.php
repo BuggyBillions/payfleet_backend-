@@ -75,6 +75,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('company-activity-logs', [CompanyProfileController::class, 'activityLogs']);
     Route::get('company-notifications', [CompanyProfileController::class, 'notifications']);
     Route::patch('read-notification/{id}', [CompanyProfileController::class, 'markAsRead']);
+    Route::get('my-company-stats',  [CompanyProfileController::class, 'myCompanyStats']);
 
 
     // funding

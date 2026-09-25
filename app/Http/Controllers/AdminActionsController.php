@@ -18,7 +18,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 
 class AdminActionsController extends Controller
-{
+{   
     public function getCompanies(Request $request)
     {
         $admin = $request->user();
@@ -616,7 +616,7 @@ class AdminActionsController extends Controller
             ], 500);
         }
     }
-
+    
     public function createAccount(Request $request)
     {
         $admin = $request->user();
