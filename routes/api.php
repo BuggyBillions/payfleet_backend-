@@ -69,7 +69,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('delete-employee/{id}', [EmployeeController::class, 'destroy']);
     Route::put('single-paying/{id}', [EmployeeController::class, 'togglePaying']);
     Route::put('multiple-paying', [EmployeeController::class, 'updateMultiplePaying']);
-    Route::put('update-company-details', [AdminActionsController::class, 'UpdateCompanyProfile']);
+    Route::post('update-company-details', [AdminActionsController::class, 'UpdateCompanyProfile']);
     Route::get('company-deposit', [CompanyFundController::class, 'getCompanyDeposit']);
     Route::get('each-company-deposit/{id}', [CompanyFundController::class, 'getCompanyDepositDetails']);
     Route::get('company-activity-logs', [CompanyProfileController::class, 'activityLogs']);

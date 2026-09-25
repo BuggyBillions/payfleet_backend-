@@ -24,30 +24,70 @@ class EmployeeController extends Controller
     
     public function createEmployee(Request $request)
     {
-        $admin = $request->user();
+        $companyUser = $request->user();
 
-        if(!$admin){
+        if (!$companyUser) {
             return response()->json([
-                'status'   => false,
-                'message'  => 'Unauthorized.'
+                'status' => false,
+                'message' => 'Unauthorized.'
             ], 401);
         }
 
-        if(!$this->isFullCompany($admin)){
+        if (!$this->isFullCompany($companyUser)) {
             return response()->json([
-                'status'   => false,
-                'message'  => 'Only Company can Create Employee.'
+                'status' => false,
+                'message' => 'Only Company can Create Employee.'
+            ], 403);
+        }
+
+        $company = Company::where('user_id', $companyUser->id)->first();
+
+        if (!$company) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Company account not found.'
+            ], 404);
+        }
+
+        $tier = (int) $company->tier;
+
+        $employeeLimits = [
+            1 => 5,
+            2 => 15,
+            3 => 50,
+        ];
+
+        if (!isset($employeeLimits[$tier])) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Your company tier is not properly configured. Please contact support.'
+            ], 422);
+        }
+
+        $employeeLimit = $employeeLimits[$tier];
+
+        $currentEmployees = Employees::where('company_id', $company->id)->count();
+
+        if ($currentEmployees >= $employeeLimit) {
+            return response()->json([
+                'status' => false,
+                'message' => 'You have reached the maximum number of employees for your current plan. Please upgrade your plan to add more employees.',
+                'data' => [
+                    'tier' => $tier,
+                    'employee_limit' => $employeeLimit,
+                    'current_employees' => $currentEmployees,
+                    'remaining_slots' => 0,
+                ]
             ], 403);
         }
 
         $validated = $request->validate([
-            'company_id'  =>   'required',
-            'first_name'  =>   'required|string|max:255',
-            'last_name'  =>    'required|string|max:255',
-            'email'      =>    'required|unique:employees,email',
-            'phone'      =>    'required|string|max:15',
-            'address'    =>    'required|string',
-            'job_title'  =>    'required|string',
+            'first_name' => 'required|string|max:255',
+            'last_name' => 'required|string|max:255',
+            'email' => 'required|email|unique:employees,email',
+            'phone' => 'required|string|max:15',
+            'address' => 'required|string',
+            'job_title' => 'required|string',
             'employment_type' => 'required|string',
             'bank_name' => 'required|string',
             'account_name' => 'required|string',
@@ -56,55 +96,70 @@ class EmployeeController extends Controller
         ]);
 
         DB::beginTransaction();
-        try{
-            $employee  = Employees::create([
-                'company_id'    =>   $validated['company_id'],
-                'first_name'    =>   $validated['first_name'],
-                'last_name'    =>   $validated['last_name'],
-                'email'    =>   $validated['email'],
-                'phone'    =>   $validated['phone'],
-                'address'    =>   $validated['address'],
-                'job_title'    =>   $validated['job_title'],
-                'paying'    =>   1,
-                'employment_type'    =>   $validated['employment_type'],
-                'bank_name'    =>   $validated['bank_name'],
-                'account_name'    =>   $validated['account_name'],
-                'account_number'    =>   $validated['account_number'],
-                'estimate_pay'    =>   $validated['estimate_pay'],
+
+        try {
+            $employee = Employees::create([
+                'company_id' => $company->id,
+                'first_name' => $validated['first_name'],
+                'last_name' => $validated['last_name'],
+                'email' => $validated['email'],
+                'phone' => $validated['phone'],
+                'address' => $validated['address'],
+                'job_title' => $validated['job_title'],
+                'paying' => 1,
+                'employment_type' => $validated['employment_type'],
+                'bank_name' => $validated['bank_name'],
+                'account_name' => $validated['account_name'],
+                'account_number' => $validated['account_number'],
+                'estimate_pay' => $validated['estimate_pay'],
             ]);
 
             ActivityLog::create([
-                'user_id'  => $admin->id,
-                'action'     => 'Company created Employee',
+                'user_id' => $companyUser->id,
+                'action' => 'Company created Employee',
                 'details' => json_encode([
-                    'created_support_id' => $admin->id,
-                    'email' => $admin->email,
-                    'role' => $admin->role,
+                    'company_id' => $company->id,
+                    'company_name' => $company->name,
+                    'employee_id' => $employee->id,
+                    'employee_name' => $employee->first_name . ' ' . $employee->last_name,
+                    'employee_email' => $employee->email,
+                    'tier' => $tier,
                 ]),
-                'type' => 'admin',
+                'type' => 'company',
             ]);
 
             Notification::create([
-                'user_id' => $admin->id,
-                'title' => 'Company Created Employee',
-                'message' => 'Company Successfully created an employee',
+                'user_id' => $companyUser->id,
+                'title' => 'Employee Created',
+                'message' => 'Employee account was successfully created.',
                 'type' => 'system',
             ]);
 
-
             DB::commit();
+
+            $currentEmployees++;
             return response()->json([
-                'status'   =>  true,
-                'message'  => 'Employee Account created sucessfully.',
-                'data'     => $employee,
+                'status' => true,
+                'message' => 'Employee Account created successfully.',
+                'data' => [
+                    'employee' => $employee,
+                    'employee_stats' => [
+                        'tier' => $tier,
+                        'employee_limit' => $employeeLimit,
+                        'current_employees' => $currentEmployees,
+                        'remaining_slots' => $employeeLimit - $currentEmployees,
+                    ]
+                ],
             ], 201);
 
-        }catch(\Exception $e){
+        } catch (\Exception $e) {
+
             DB::rollBack();
+
             return response()->json([
-                'status'  => false,
+                'status' => false,
                 'message' => 'Employee Account creation failed.',
-                'error'   =>  $e->getMessage()
+                'error' => $e->getMessage()
             ], 500);
         }
     }
