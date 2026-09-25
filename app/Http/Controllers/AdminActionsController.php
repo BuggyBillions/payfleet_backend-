@@ -509,19 +509,19 @@ class AdminActionsController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'name'     => 'nullable|string|max:255',
-            'email'    => 'nullable|email|max:255|unique:companies,email,' . $company->id,
-            'phone'    => 'nullable|string|max:50|unique:companies,phone,' . $company->id,
-            'about'    => 'nullable|string',
-            'address'  => 'nullable|string',
-            'pin'      => 'nullable|string|size:4',
-            'password' => 'nullable|string|min:8',
-            'logo'     => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
-            'bvn'  => 'nullable|int',
-            'nin'  => 'nullable|int',
-            'cac'     => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
-            'mermat'     => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
-            'status_report'     => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
+            'name'          => 'nullable|string|max:255',
+            'email'         => 'nullable|email|max:255|unique:companies,email,' . $company->id,
+            'phone'         => 'nullable|string|max:50|unique:companies,phone,' . $company->id,
+            'about'         => 'nullable|string',
+            'address'       => 'nullable|string',
+            'pin'           => 'nullable|string|size:4',
+            'password'      => 'nullable|string|min:8',
+            'logo'          => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
+            'bvn'           => 'nullable|integer',
+            'nin'           => 'nullable|integer',
+            'cac'           => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
+            'mermat'        => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
+            'status_report' => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
         ]);
 
         if ($validator->fails()) {
@@ -576,27 +576,31 @@ class AdminActionsController extends Controller
             }
 
             if ($request->hasFile('logo')) {
-                $logoPath = $request->file('logo')->store('company_logos', 'public');
+                $logoPath = $request->file('logo')
+                    ->store('company_logos', 'public');
 
                 $companyUpdateData['logo'] = $logoPath;
             }
 
             if ($request->hasFile('cac')) {
-                $cacPath = $request->file('cac')->store('company_cacs', 'public');
+                $cacPath = $request->file('cac')
+                    ->store('company_cacs', 'public');
 
                 $companyUpdateData['cac'] = $cacPath;
             }
 
             if ($request->hasFile('mermat')) {
-                $mermatPath = $request->file('mermat')->store('company_mermats', 'public');
+                $mermatPath = $request->file('mermat')
+                    ->store('company_mermats', 'public');
 
-                $companyUpdateData['cac'] = $mermatPath;
-            } 
-            
+                $companyUpdateData['mermat'] = $mermatPath;
+            }
+
             if ($request->hasFile('status_report')) {
-                $statusPath = $request->file('status_report')->store('company_stauss', 'public');
+                $statusPath = $request->file('status_report')
+                    ->store('company_status_reports', 'public');
 
-                $companyUpdateData['cac'] = $statusPath;
+                $companyUpdateData['status_report'] = $statusPath;
             }
 
             if (!empty($companyUpdateData)) {
@@ -623,11 +627,28 @@ class AdminActionsController extends Controller
                         'phone' => $company->phone,
                         'about' => $company->about,
                         'address' => $company->address,
+
                         'logo' => $company->logo
                             ? asset('storage/' . $company->logo)
                             : null,
+
+                        'cac' => $company->cac
+                            ? asset('storage/' . $company->cac)
+                            : null,
+
+                        'mermat' => $company->mermat
+                            ? asset('storage/' . $company->mermat)
+                            : null,
+
+                        'status_report' => $company->status_report
+                            ? asset('storage/' . $company->status_report)
+                            : null,
+
+                        'bvn' => $company->bvn,
+                        'nin' => $company->nin,
                         'balance' => $company->balance,
                     ],
+
                     'user' => [
                         'id' => $user->id,
                         'name' => $user->name,

@@ -310,4 +310,34 @@ class EmployeeController extends Controller
             'message' => "Paying status updated for {$updated} employee(s)",
         ]);
     }
+    
+    private function isStaff(User $user) : bool 
+    {
+      return $user->role === 'finance';   
+    }
+
+    private function isFullAdmin(User $user) : bool{
+        return $user->role === 'admin';
+    }
+
+    private function canManageUsers(User $user): bool
+    {
+        return ($user->is_active == 1 &&
+            (
+                $this->isFullAdmin($user) ||
+                $this->isStaff($user) 
+            )
+        );
+    }
+
+    public function deductionPay(Request $request)
+    {
+        $admin  = $request->user();
+
+        if (!$admin) {
+            return response()->json([
+
+            ]);
+        }
+    }
 }

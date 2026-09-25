@@ -32,14 +32,6 @@ class Company extends Model
         'password',
     ];
 
-    // public function employees()
-    // {
-    //     return $this->hasMany(Employee::class);
-    // }
-    // public function transactions()
-    // {
-    //     return $this->hasMany(Transaction::class);
-    // }
 
     public function user()
     {

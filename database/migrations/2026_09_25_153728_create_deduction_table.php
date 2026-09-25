@@ -11,8 +11,12 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('employees', function (Blueprint $table) {
-            $table->string('deduction_id')->nullable();
+        Schema::create('deduction', function (Blueprint $table) {
+            $table->id();
+            $table->decimal('amount', 10, 2);
+            $table->string('reason');
+            $table->string('no_of_month');
+            $table->timestamps();
         });
     }
 
@@ -21,8 +25,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('employees', function (Blueprint $table) {
-            //
-        });
+        Schema::dropIfExists('deduction');
     }
 };

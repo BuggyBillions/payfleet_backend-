@@ -190,7 +190,7 @@ class ChatController extends Controller
         if (!$user) {
             return response()->json([
                 'status' => false,
-                'message' => 'User not found.',
+                'message' => 'Company not found.',
             ], 404);
         }
 
@@ -237,7 +237,7 @@ class ChatController extends Controller
             ], 401);
         }
 
-        if ($sender->is_active != 1 || $sender->is_verified != 1 || !in_array($sender->role, ['admin', 'support'])) {
+        if ($sender->is_active != 1 || $sender->is_verified != 1 || !in_array($sender->role, ['admin', 'support','finance'])) {
             return response()->json([
                 'status' => false,
                 'message' => 'You are not authorized to send support messages.',
@@ -375,7 +375,7 @@ class ChatController extends Controller
         }
 
         $admin = User::query()
-            ->whereIn('role', ['support'])
+            ->whereIn('role', ['support','admin','finance'])
             ->where('is_active', 1)
             ->where('is_verified', 1)
             ->first();
