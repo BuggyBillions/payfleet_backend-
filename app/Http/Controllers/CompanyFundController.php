@@ -113,7 +113,7 @@ class CompanyFundController extends Controller
                 "status"     => true,
                 "message"    => "Company Account successfully funded", 
                 'data'       => $transaction,
-                'amount_with_bonus' => (float) $validated['amount'] + 100
+                'checkout_amount' => (float) $validated['amount'] + 100
             ]);
         }catch(\Exception $e){
             DB::rollBack();
