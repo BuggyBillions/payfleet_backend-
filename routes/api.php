@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AdminActionsController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\ChatController;
 use App\Http\Controllers\CompanyFundController;
 use App\Http\Controllers\CompanyProfileController;
 use App\Http\Controllers\EmployeeController;
@@ -97,4 +98,17 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('each-tiers/{id}', [TierController::class, 'eachTier']);
     Route::delete('delete-tiers/{id}', [TierController::class, 'deleteTier']);
     Route::put('update-tier/{id}', [TierController::class, 'updateTier']);
+});
+
+// customer support
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/support/messages',[ChatController::class, 'getUserMessages']);
+    Route::post('/support/messages',[ChatController::class, 'sendMessageToAdmin']);
+    Route::post('/support/messages/read',[ChatController::class, 'markAsRead']);
+    Route::get( '/support/unread-count',[ChatController::class, 'unreadCount']);
+
+    // Admin / Support
+    Route::get('/admin/support/conversations',[ChatController::class, 'getConversations']);
+    Route::get('/admin/support/conversations/{userId}',[ChatController::class, 'getAdminMessages']);
+    Route::post('/admin/support/conversations/{userId}/messages',[ChatController::class, 'sendMessageToUser']);
 });

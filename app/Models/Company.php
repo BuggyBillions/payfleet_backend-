@@ -55,4 +55,9 @@ class Company extends Model
     {
         return $this->belongsTo(Tier::class, 'tier');
     }
+
+    public function tierDetails()
+    {
+        return $this->belongsTo(Tier::class, 'tier', 'id');
+    }
 }

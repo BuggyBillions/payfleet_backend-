@@ -352,8 +352,9 @@ class AuthController extends Controller
 
     public function me(Request $request): JsonResponse
     {
-        $user = User::with(['company', 'tier'])
-            ->find($request->user()->id);
+        $user = User::with([
+            'company.tierDetails'
+        ])->find($request->user()->id);
 
         if (!$user) {
             return response()->json([
@@ -373,25 +374,28 @@ class AuthController extends Controller
         ];
 
         if ($user->company) {
+
+            $tier = $user->company->tierDetails;
+
             $response['company_details'] = [
                 'id' => $user->company->id,
                 'name' => $user->company->name,
                 'email' => $user->company->email,
-                'tier'  =>  $user->company->tier,
+                'tier' => $tier ? [
+                    'id' => $tier->id,
+                    'name' => $tier->name,
+                    'level' => $tier->level,
+                    'created_at' => $tier->created_at,
+                ] : null,
+
                 'phone' => $user->company->phone,
+
                 'logo' => $user->company->logo
                     ? asset('storage/' . $user->company->logo)
                     : null,
+
                 'about' => $user->company->about,
                 'address' => $user->company->address,
-                'created_at' => $user->company->created_at,
-            ];
-        }
-
-        if ($user->tier) {
-            $response['tier_details'] = [
-                'id' => $user->tier->id,
-                'name' => $user->tier->name,
                 'created_at' => $user->company->created_at,
             ];
         }
