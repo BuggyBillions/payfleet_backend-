@@ -354,4 +354,35 @@ class CompanyProfileController extends Controller
             'message' => 'Notification marked as read'
         ]);
     }
+    private function isFullCompany(User $user): bool
+    {
+        return $user->role === 'company';
+    } 
+
+    public function moveTier(Request $request)
+    {
+        $user =  $request->user();
+        $admin =  $request->user();
+
+        if(!$admin){
+            return response()->json([
+                'status'    =>    false,
+                'message'   =>   'Unauthorized for this endpoint.'
+            ]);
+        }
+
+        if(!$this->isFullCompany($admin)){
+            return response()->json([
+                'status'    =>  false,
+                'message'   =>  "Only Company can fund account"
+            ], 403);
+        }
+
+        $company  = Company::where('user_id', $user->id)->first();
+        
+        $validated  = $request->validate([
+            'amount'       => ['required'],
+            'company_id'   => ['required'],
+        ]);
+    }
 }

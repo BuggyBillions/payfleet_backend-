@@ -299,7 +299,8 @@ class CompanyFundController extends Controller
                                 ->orWhere('phone', 'LIKE', '%' . $search . '%');
                         })
                         ->orWhereHas('transaction', function ($transactionQuery) use ($search) {
-                            $transactionQuery->where('status', 'LIKE', '%' . $search . '%');
+                            $transactionQuery->where('status', 'LIKE', '%' . $search . '%')
+                            ->orWhere('reference', 'LIKE', '%' . $search . '%');
                         });
                 });
             })

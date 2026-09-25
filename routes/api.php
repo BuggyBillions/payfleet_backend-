@@ -55,6 +55,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('admin-notifications', [AdminActionsController::class, 'adminNotifications']);
     Route::get('each-admin-activity/{id}', [AdminActionsController::class, 'getSingleActivity']);
     Route::get('each-admin-notification/{id}', [AdminActionsController::class, 'getSingleNotification']);
+    Route::get('company-stats', [AuthController::class , 'companyStats']);
+    Route::get('staff-stats', [AuthController::class, 'staffStats']);
+    Route::get('deposit-stats', [AuthController::class, 'depositStats']);
 });
 
 // companies

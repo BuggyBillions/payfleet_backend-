@@ -21,6 +21,11 @@ class Company extends Model
         'pin',
         'user_id',
         'tier',
+        'bvn',
+        'nin',
+        'cac',
+        'mermat',
+        'status_report',
     ];
 
     protected $hidden = [

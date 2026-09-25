@@ -6,7 +6,11 @@ use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use App\Models\Company;
+use App\Models\Deposit;
+use App\Models\Employees;
 use App\Models\Notification;
+use App\Models\Tier;
+use App\Models\Transaction;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\JsonResponse;
@@ -405,5 +409,163 @@ class AuthController extends Controller
             'message' => 'User fetched successfully',
             'data' => $response
         ], 200);
+    }
+
+    public function companyStats(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'message' => 'Unauthorized'
+            ], 401);
+        }
+
+        if ($user->role === 'admin') {
+
+            $totalCompanies = Company::count();
+            $totalEmployees = Employees::count();
+            $activeAccounts = User::count();
+
+            $tiers =Tier::latest()->get();
+
+            return response()->json([
+                'message' => 'Admin dashboard stats',
+                'role' => 'admin',
+                'total_companies' => $totalCompanies,
+                'total_employees' => $totalEmployees,
+                'active_account' => $activeAccounts,
+                'tiers' => $tiers,
+            ]);
+        }
+
+        $company = Company::where('email', $user->email)->first();
+
+        if (!$company) {
+            return response()->json([
+                'message' => 'Company not found',
+            ], 404);
+        }
+
+        $totalEmployees = Employees::where('company_id', $company->id)->count();
+        $activeAccounts = User::where('is_active', true)->count();
+
+        return response()->json([
+            'message' => 'Company dashboard stats',
+            'role' => 'company',
+            'company_id' => $company->id,
+            'company_name' => $company->name,
+            'total_employees' => $totalEmployees,
+            'active_acccount' => $activeAccounts,
+        ]);
+    }
+
+    public function staffStats(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'message' => 'Unauthorized'
+            ], 401);
+        }
+
+        if ($user->role === 'admin') {
+            $totalStaff = User::whereIn('role', [
+                'finance',
+                'support'
+            ])->count();
+
+            $financeOfficers = User::where('role', 'finance')->count();
+            $supportOfficers = User::where('role', 'support')->count();
+
+            $activeStaffAccounts = User::whereIn('role', [
+                'finance',
+                'support'
+            ])
+            ->where('is_active', true)
+            ->count();
+
+            return response()->json([
+                'message' => 'Admin dashboard stats',
+                'role' => 'admin',
+                'total_staff' => $totalStaff,
+                'finance_officers' => $financeOfficers,
+                'support_officers' => $supportOfficers,
+                'active_accounts' => $activeStaffAccounts,
+            ]);
+        }
+
+        $company = Company::where('email', $user->email)->first();
+
+        if (!$company) {
+            return response()->json([
+                'message' => 'Company not found',
+            ], 404);
+        }
+
+        $totalEmployees = Employees::where(
+            'company_id',
+            $company->id
+        )->count();
+
+        $activeAccounts = User::where('is_active', true)->count();
+
+        return response()->json([
+            'message' => 'Company dashboard stats',
+            'role' => 'company',
+            'company_id' => $company->id,
+            'company_name' => $company->name,
+            'total_employees' => $totalEmployees,
+            'active_accounts' => $activeAccounts,
+        ]);
+    }
+
+    public function depositStats(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'message' => 'Unauthorized'
+            ], 401);
+        }
+
+        if ($user->role === 'admin') {
+
+            $totalDeposited = Transaction::where('transaction_type', 'deposit')
+                ->sum('amount');
+
+            $pendingApprovals = Transaction::where('transaction_type', 'deposit')
+                ->where('status', 'pending')
+                ->count();
+
+            $pendingVolume = Transaction::where('transaction_type', 'deposit')
+                ->where('status', 'pending')
+                ->sum('amount');
+
+            $settledDeposits = Transaction::where('transaction_type', 'deposit')
+                ->where('status', 'successful')
+                ->count();
+
+            $declinedDeposits = Transaction::where('transaction_type', 'deposit')
+                ->where('status', 'declined')
+                ->count();
+
+            return response()->json([
+                'message' => 'Admin deposit stats',
+                'role' => 'admin',
+
+                'total_deposited' => $totalDeposited,
+                'pending_approvals' => $pendingApprovals,
+                'pending_volume' => $pendingVolume,
+                'settled_deposits' => $settledDeposits,
+                'declined_deposits' => $declinedDeposits,
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Unauthorized'
+        ], 403);
     }
 }
