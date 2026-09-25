@@ -80,6 +80,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('tier-requests', [CompanyProfileController::class, 'tierUpgradeRequests']);
     Route::post('review-tier-upgrade/{id}', [CompanyProfileController::class, 'reviewTierUpgrade']);
     Route::post('deduct-salary', [EmployeeController::class, 'deductionPay']);
+    Route::put('update-personal-details', [AdminActionsController::class, 'updateAdminPassword']);
 
 
     // funding

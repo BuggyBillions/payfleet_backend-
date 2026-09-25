@@ -1259,4 +1259,82 @@ class AdminActionsController extends Controller
             'data' => $notification
         ], 200);
     }
+
+    public function updateAdminPassword(Request $request)
+    {
+        $user = $request->user();
+
+        if(!$user) {
+            return response()->json([
+                'status'     =>    false,
+                'message'    =>    'Unathenticated'
+            ]);
+        }
+
+        $validator  = validator::make($request->all(), [
+            'name'       =>    'nullable|string|max:225',
+            'email'      =>    'nullable|string|max:50|unique:users,email',
+            'phone'      =>    'nullable|string|max:50|unique:users,phone',
+            'password'   =>    'nullable|string|min:8'
+        ]);
+
+        if ($validator->fails()){
+            return response()->json([
+                'status'    =>   false,
+                'errors'   =>    $validator->errors() 
+            ], 422);
+        }
+
+        DB::beginTransaction();
+
+        try {
+            $userUpdateData   = [];
+
+            if ($request->has('name')) {
+                $userUpdateData['name'] = $request->name;
+            }
+
+            if($request->has('email')){
+                $userUpdateData['email'] = $request->email;
+            }
+
+            if($request->has('phone')){
+                $userUpdateData['phone']  =  $request->phone;
+            }
+
+            if($request->has('password')){
+                $userUpdateData['password']  = Hash::make($request->password);
+            }
+
+            if(!empty($userUpdateData)){
+                $user->update($userUpdateData);
+            }
+
+            DB::commit();
+
+            $user->refresh();
+
+            return response()->json([
+                'status'          =>    true,
+                'message'         =>    'Personal details successfully updated.',
+                'data'            =>     [
+                    'user'  =>[
+                        'id'    => $user->id,
+                        'name'  => $user->name,
+                        'phone' => $user->phone,
+                        'email' => $user->email,
+                    ]
+                ]
+            ], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'status'     =>   false,
+                'message'    =>   'Admin profile update failed.',
+                'error'      =>    $e->getMessage()
+            ], 500);
+        }
+    }
+    
 }

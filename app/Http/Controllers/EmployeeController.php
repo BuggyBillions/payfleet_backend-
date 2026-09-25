@@ -494,4 +494,9 @@ class EmployeeController extends Controller
             ], 500);
         }
     }
+
+    public function AlldeductedEmployee(Request $request)
+    {
+        
+    }
 }
