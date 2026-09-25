@@ -6,6 +6,7 @@ use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use App\Models\Company;
+use App\Models\Deduction;
 use App\Models\Employees;
 use App\Models\Notification;
 use App\Models\User;
@@ -387,12 +388,110 @@ class EmployeeController extends Controller
 
     public function deductionPay(Request $request)
     {
-        $admin  = $request->user();
+        $admin = $request->user();
 
         if (!$admin) {
             return response()->json([
+                'status' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
 
+        if (!$this->isFullCompany($admin)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Only Company can deduct staff salary.'
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'employee_id' => ['required', 'integer', 'exists:employees,id'],
+            'amount' => ['required', 'numeric', 'min:0.01'],
+            'reason' => ['required', 'string', 'max:255'],
+            'no_of_month' => ['required', 'integer', 'min:1'],
+        ]);
+
+        $company = Company::where('user_id', $admin->id)->first();
+
+        if (!$company) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Company account not found.'
+            ], 404);
+        }
+
+        $employee = Employees::where('id', $validated['employee_id'])
+            ->where('company_id', $company->id)
+            ->first();
+
+        if (!$employee) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Employee not found or does not belong to your company.'
+            ], 404);
+        }
+
+        DB::beginTransaction();
+
+        try {
+            $deduction = Deduction::create([
+                'employee_id' => $employee->id,
+                'amount' => $validated['amount'],
+                'reason' => $validated['reason'],
+                'no_of_month' => $validated['no_of_month'],
             ]);
+
+            $employee->update([
+                'deduction_id' => $deduction->id,
+                'deduction_amount' => $validated['amount'],
+            ]);
+
+            ActivityLog::create([
+                'user_id' => $admin->id,
+                'action' => 'Company Added Employee Deduction',
+                'details' => json_encode([
+                    'company_id' => $company->id,
+                    'employee_id' => $employee->id,
+                    'employee_name' => $employee->first_name . ' ' . $employee->last_name,
+                    'deduction_id' => $deduction->id,
+                    'amount' => $deduction->amount,
+                    'reason' => $deduction->reason,
+                    'no_of_month' => $deduction->no_of_month,
+                ]),
+                'type' => 'company',
+            ]);
+
+            Notification::create([
+                'user_id' => $admin->id,
+                'title' => 'Employee Salary Deduction',
+                'message' => 'A salary deduction was successfully added to ' .
+                    $employee->first_name . ' ' . $employee->last_name . '.',
+                'type' => 'system',
+            ]);
+
+            DB::commit();
+
+            $employee->refresh();
+            $deduction->refresh();
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Employee salary deduction created successfully.',
+                'data' => [
+                    'deduction' => $deduction,
+                    'employee' => $employee,
+                ]
+            ], 201);
+
+        } catch (\Exception $e) {
+
+            DB::rollBack();
+
+            return response()->json([
+                'status' => false,
+                'message' => 'Employee salary deduction failed.',
+                'error' => $e->getMessage()
+            ], 500);
         }
     }
 }

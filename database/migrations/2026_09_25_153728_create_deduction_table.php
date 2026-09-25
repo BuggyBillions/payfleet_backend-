@@ -11,9 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('deduction', function (Blueprint $table) {
+        Schema::create('deductions', function (Blueprint $table) {
             $table->id();
             $table->decimal('amount', 10, 2);
+            $table->string('employee_id');
             $table->string('reason');
             $table->string('no_of_month');
             $table->timestamps();
