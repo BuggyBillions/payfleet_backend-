@@ -235,7 +235,8 @@ class PaymentController extends Controller
 
                 $totalPaid++;
                 Payment::create([
-                    
+                    'employee_id' => $employee->user_id ?? $admin->id,
+                    'employee_name' => $employee->user_id ?? $admin->id,
                 ]);
                 Transaction::create([
                     'user_id'          => $employee->user_id ?? $admin->id,
