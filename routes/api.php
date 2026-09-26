@@ -6,6 +6,7 @@ use App\Http\Controllers\ChatController;
 use App\Http\Controllers\CompanyFundController;
 use App\Http\Controllers\CompanyProfileController;
 use App\Http\Controllers\EmployeeController;
+use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\TierController;
 use App\Models\Employee;
 use Illuminate\Http\Request;
@@ -122,4 +123,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/admin/support/conversations',[ChatController::class, 'getConversations']);
     Route::get('/admin/support/conversations/{userId}',[ChatController::class, 'getAdminMessages']);
     Route::post('/admin/support/conversations/{userId}/messages',[ChatController::class, 'sendMessageToUser']);
+});
+
+// payment
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('pay-employee', [PaymentController::class, 'trigerPayroll']);
 });
