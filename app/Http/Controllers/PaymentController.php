@@ -13,6 +13,7 @@ use Carbon\Carbon;
 use App\Models\Company;
 use App\Models\Employees;
 use App\Models\Deduction;
+use App\Models\Payment;
 use App\Models\Transaction;
 use Illuminate\Support\Facades\Hash;
 
@@ -57,7 +58,7 @@ class PaymentController extends Controller
             ], 403);
         }
 
-        if (!Hash::check($validated['pin'], $admin->pin)) {
+        if (!Hash::check($validated['pin'], $company->pin)) {
             return response()->json([
                 'status'  => false,
                 'message' => 'Invalid PIN.',
@@ -87,7 +88,7 @@ class PaymentController extends Controller
             $totalFailed = 0;
             $totalDeductions = 0;
 
-            $flutterwaveSecretKey = config('services.flutterwave.secret');
+            $flutterwaveSecretKey = config('services.flutterwave.secret_key');
 
             if (!$flutterwaveSecretKey) {
                 DB::rollBack();
@@ -233,6 +234,9 @@ class PaymentController extends Controller
                 }
 
                 $totalPaid++;
+                Payment::create([
+                    
+                ]);
                 Transaction::create([
                     'user_id'          => $employee->user_id ?? $admin->id,
                     'amount'           => $netSalary,
