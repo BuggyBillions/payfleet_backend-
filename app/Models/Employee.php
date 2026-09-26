@@ -29,4 +29,9 @@ class Employee extends Model
     {
         return $this->belongsTo(\App\Models\Company::class);
     }
+
+    public function Deduction()
+    {
+        return $this->hasOne(Deduction::class);
+    }
 }

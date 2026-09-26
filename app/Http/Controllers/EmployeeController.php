@@ -381,7 +381,8 @@ class EmployeeController extends Controller
         return ($user->is_active == 1 &&
             (
                 $this->isFullAdmin($user) ||
-                $this->isStaff($user) 
+                $this->isStaff($user) ||
+                $this->isFullCompany($user)
             )
         );
     }
@@ -497,6 +498,128 @@ class EmployeeController extends Controller
 
     public function AlldeductedEmployee(Request $request)
     {
-        
+       $admin = $request->user();
+
+        if (!$this->canManageUsers($admin)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthorized.'
+            ], 403);
+        } 
+
+        $search = $request->input('search');
+
+        $deposits = Deduction::with([
+                'employee'
+            ])
+            ->when($search, function ($query) use ($search) {
+                $query->where(function ($q) use ($search) {
+
+                    $q->where('amount', 'LIKE', '%' . $search . '%')
+                        ->orWhere('employee_id', 'LIKE', '%' . $search . '%')
+                        ->orWhereHas('employee', function ($companyQuery) use ($search) {
+                            $companyQuery->where('first_name', 'LIKE', '%' . $search . '%')
+                                ->orWhere('email', 'LIKE', '%' . $search . '%')
+                                ->orWhere('job_title', 'LIKE', '%' . $search . '%')
+                                ->orWhere('address', 'LIKE', '%' . $search . '%')
+                                ->orWhere('last_name', 'LIKE', '%' . $search . '%');
+                        });
+                });
+            })
+            ->latest()
+            ->paginate(20);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Deposits fetched successfully',
+            'data' => $deposits
+        ], 200);
+    }
+    
+    public function companyDeduction(Request $request)
+    {
+        $admin = $request->user();
+
+        if (!$this->canManageUsers($admin)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthorized.'
+            ], 403);
+        }
+
+        $search = $request->input('search');
+        $companyId = $request->input('company_id');
+        $employeeId = $request->input('employee_id');
+        $status = $request->input('status');
+        $minAmount = $request->input('min_amount');
+        $maxAmount = $request->input('max_amount');
+        $startDate = $request->input('start_date');
+        $endDate = $request->input('end_date');
+
+        $deductions = Deduction::with([
+            'employee.company'
+        ])
+        ->when($search, function ($query) use ($search) {
+            $query->where(function ($q) use ($search) {
+
+                $q->where('amount', 'LIKE', '%' . $search . '%')
+                    ->orWhere('reason', 'LIKE', '%' . $search . '%')
+                    ->orWhere('employee_id', 'LIKE', '%' . $search . '%')
+                    ->orWhere('no_of_month', 'LIKE', '%' . $search . '%')
+
+                    ->orWhereHas('employee', function ($employeeQuery) use ($search) {
+                        $employeeQuery->where('first_name', 'LIKE', '%' . $search . '%')
+                            ->orWhere('last_name', 'LIKE', '%' . $search . '%')
+                            ->orWhere('email', 'LIKE', '%' . $search . '%')
+                            ->orWhere('phone', 'LIKE', '%' . $search . '%')
+                            ->orWhere('job_title', 'LIKE', '%' . $search . '%')
+                            ->orWhere('address', 'LIKE', '%' . $search . '%')
+                            ->orWhere('bank_name', 'LIKE', '%' . $search . '%')
+                            ->orWhere('account_name', 'LIKE', '%' . $search . '%')
+                            ->orWhere('account_number', 'LIKE', '%' . $search . '%')
+
+                            ->orWhereHas('company', function ($companyQuery) use ($search) {
+                                $companyQuery->where('name', 'LIKE', '%' . $search . '%')
+                                    ->orWhere('email', 'LIKE', '%' . $search . '%')
+                                    ->orWhere('phone', 'LIKE', '%' . $search . '%');
+                            });
+                    });
+            });
+        })
+
+        ->when($companyId, function ($query) use ($companyId) {
+            $query->whereHas('employee', function ($employeeQuery) use ($companyId) {
+                $employeeQuery->where('company_id', $companyId);
+            });
+        })
+
+        ->when($employeeId, function ($query) use ($employeeId) {
+            $query->where('employee_id', $employeeId);
+        })
+
+        ->when($minAmount, function ($query) use ($minAmount) {
+            $query->where('amount', '>=', $minAmount);
+        })
+
+        ->when($maxAmount, function ($query) use ($maxAmount) {
+            $query->where('amount', '<=', $maxAmount);
+        })
+
+        ->when($startDate, function ($query) use ($startDate) {
+            $query->whereDate('created_at', '>=', $startDate);
+        })
+
+        ->when($endDate, function ($query) use ($endDate) {
+            $query->whereDate('created_at', '<=', $endDate);
+        })
+
+        ->latest()
+        ->paginate(20);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Company deductions fetched successfully',
+            'data' => $deductions
+        ], 200);
     }
 }

@@ -15,4 +15,9 @@ class Deduction extends Model
         'no_of_month',
         'employee_id'
     ];
+
+    public function Employee()
+    {
+        return $this->belongsTo(Employees::class);
+    }
 }
