@@ -410,53 +410,54 @@ class AuthController extends Controller
             'data' => $response
         ], 200);
     }
+    private function isCompany(User $user) :bool{
+        return $user->role === 'company';
+    }
+
+    private function isFullAdmin(User $user) :bool
+    {
+        return $user->role === 'admin';
+    }
+
+    private function isFinace (User $user) : bool 
+    {
+        return $user->role === 'finance';
+    }
+    
+    private function canManageUsers(User $user) : bool
+    {
+        return($user->is_active == 1 &&
+            (
+                $this->isFullAdmin($user) ||
+                $this->isCompany($user)   ||
+                $this->isFinace($user)
+            )
+        );
+    }
 
     public function companyStats(Request $request)
     {
         $user = $request->user();
 
-        if (!$user) {
+        if (!$this->canManageUsers($user)) {
             return response()->json([
+                'status'  => false,
                 'message' => 'Unauthorized'
             ], 401);
         }
 
-        if ($user->role === 'admin') {
+        $totalCompanies = Company::count();
+        $totalEmployees = Employees::count();
+        $activeAccounts = User::count();
 
-            $totalCompanies = Company::count();
-            $totalEmployees = Employees::count();
-            $activeAccounts = User::count();
-
-            $tiers =Tier::latest()->get();
-
-            return response()->json([
-                'message' => 'Admin dashboard stats',
-                'role' => 'admin',
-                'total_companies' => $totalCompanies,
-                'total_employees' => $totalEmployees,
-                'active_account' => $activeAccounts,
-                'tiers' => $tiers,
-            ]);
-        }
-
-        $company = Company::where('email', $user->email)->first();
-
-        if (!$company) {
-            return response()->json([
-                'message' => 'Company not found',
-            ], 404);
-        }
-
-        $totalEmployees = Employees::where('company_id', $company->id)->count();
-        $activeAccounts = User::where('is_active', true)->count();
+        $tiers =Tier::latest()->get();
 
         return response()->json([
-            'message' => 'Company dashboard stats',
-            'role' => 'company',
-            'company_id' => $company->id,
-            'company_name' => $company->name,
+            'message' => 'Dashboard stats',
+            'total_companies' => $totalCompanies,
             'total_employees' => $totalEmployees,
-            'active_acccount' => $activeAccounts,
+            'active_account' => $activeAccounts,
+            'tiers' => $tiers,
         ]);
     }
 
@@ -525,47 +526,41 @@ class AuthController extends Controller
     {
         $user = $request->user();
 
-        if (!$user) {
+        if (!$this->canManageUsers($user)) {
             return response()->json([
+                'status'  => false,
                 'message' => 'Unauthorized'
             ], 401);
         }
 
-        if ($user->role === 'admin') {
+        $totalDeposited = Transaction::where('transaction_type', 'deposit')
+            ->sum('amount');
 
-            $totalDeposited = Transaction::where('transaction_type', 'deposit')
-                ->sum('amount');
+        $pendingApprovals = Transaction::where('transaction_type', 'deposit')
+            ->where('status', 'pending')
+            ->count();
 
-            $pendingApprovals = Transaction::where('transaction_type', 'deposit')
-                ->where('status', 'pending')
-                ->count();
+        $pendingVolume = Transaction::where('transaction_type', 'deposit')
+            ->where('status', 'pending')
+            ->sum('amount');
 
-            $pendingVolume = Transaction::where('transaction_type', 'deposit')
-                ->where('status', 'pending')
-                ->sum('amount');
+        $settledDeposits = Transaction::where('transaction_type', 'deposit')
+            ->where('status', 'successful')
+            ->count();
 
-            $settledDeposits = Transaction::where('transaction_type', 'deposit')
-                ->where('status', 'successful')
-                ->count();
-
-            $declinedDeposits = Transaction::where('transaction_type', 'deposit')
-                ->where('status', 'declined')
-                ->count();
-
-            return response()->json([
-                'message' => 'Admin deposit stats',
-                'role' => 'admin',
-
-                'total_deposited' => $totalDeposited,
-                'pending_approvals' => $pendingApprovals,
-                'pending_volume' => $pendingVolume,
-                'settled_deposits' => $settledDeposits,
-                'declined_deposits' => $declinedDeposits,
-            ]);
-        }
+        $declinedDeposits = Transaction::where('transaction_type', 'deposit')
+            ->where('status', 'declined')
+            ->count();
 
         return response()->json([
-            'message' => 'Unauthorized'
-        ], 403);
+            'message' => 'Deposit stats',
+
+            'total_deposited' => $totalDeposited,
+            'pending_approvals' => $pendingApprovals,
+            'pending_volume' => $pendingVolume,
+            'settled_deposits' => $settledDeposits,
+            'declined_deposits' => $declinedDeposits,
+            ]);
+
     }
 }
