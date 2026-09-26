@@ -584,6 +584,7 @@ class EmployeeController extends Controller
                                     ->orWhere('phone', 'LIKE', '%' . $search . '%');
                             });
                     });
+                    
             });
         })
 
@@ -621,5 +622,56 @@ class EmployeeController extends Controller
             'message' => 'Company deductions fetched successfully',
             'data' => $deductions
         ], 200);
+    }
+
+    public function deleteDeduction(Request $request, $id)
+    {
+        $admin = $request->user();
+
+        if(!$this->isFullCompany($admin)){
+            return response()->json([
+                'status'     =>    false,
+                'message'    =>    'Only company is authorized to delete employees salary deductions.'
+            ]);
+        }
+
+        $deduction  =  Deduction::find($id);
+
+        if(!$deduction){
+            return response()->json([
+                'status'    =>   false,
+                'message'   =>   'deduction not found'
+            ]);
+        }
+
+        DB::beginTransaction();
+        try {
+            $deductionData  =  $deduction->toArray();
+
+            $deduction->delete();
+
+            ActivityLog::create([
+                'user_id'      =>  $admin->id,
+                'action'       =>  'Company Deleted Deductions',
+                'details'      =>  json_encode([
+                    'id'   =>   $deductionData['id'],
+                    'email' => $deductionData['email'] ?? null,
+                    'role'  =>  $deductionData['role']   ?? null, 
+                ]),
+                'type'  =>  'admin',
+            ]);
+
+            DB::commit();
+            return response()->json([
+                'status'      => true,
+                'messsage'    => 'deduction successfully deleted',
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status'     => false,
+                'message'    => 'Deduction delete failed',
+                'error'      => $e->getMessage()
+            ], 500);
+        }
     }
 }

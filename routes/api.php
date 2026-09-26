@@ -83,6 +83,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('update-personal-details', [AdminActionsController::class, 'updateAdminPassword']);
     Route::get('all-deductions', [EmployeeController::class, 'AlldeductedEmployee']);
     Route::get('company-employee-deduction',[EmployeeController::class, 'companyDeduction']);
+    Route::delete('delete-deduction/{id}', [EmployeeController::class, 'deleteDeduction']);
 
     // funding
     Route::post('company-funding', [CompanyFundController::class, 'Deposit']);
