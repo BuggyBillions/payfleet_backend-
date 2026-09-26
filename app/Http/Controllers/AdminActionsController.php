@@ -47,7 +47,7 @@ class AdminActionsController extends Controller
                 });
             })
             ->latest()
-            ->paginate(20);
+            ->paginate($request->get('per_page', 20));
 
         return response()->json([
             'status'  => true,
