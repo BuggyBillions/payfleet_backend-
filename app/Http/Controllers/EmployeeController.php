@@ -94,6 +94,7 @@ class EmployeeController extends Controller
             'account_name' => 'required|string',
             'account_number' => 'required|string',
             'estimate_pay' => 'required|numeric|min:1',
+            'bank_code'    => 'required|string',
         ]);
 
         DB::beginTransaction();
@@ -113,6 +114,7 @@ class EmployeeController extends Controller
                 'account_name' => $validated['account_name'],
                 'account_number' => $validated['account_number'],
                 'estimate_pay' => $validated['estimate_pay'],
+                'bank_code'    => $validated['bank_code'],
             ]);
 
             ActivityLog::create([

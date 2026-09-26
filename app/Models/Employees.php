@@ -23,7 +23,8 @@ class Employees extends Model
         'account_name',
         'estimate_pay',
         'deduction_amount',
-        'deduction_id'
+        'deduction_id',
+        'bank_code',
     ];
 
     public function company()

@@ -389,27 +389,30 @@ class CompanyFundController extends Controller
         }
 
         $search = $request->input('search');
+        $status = $request->input('status');
 
         $deposits = Deposit::with([
-                'transaction',
-                'company'
-            ])
+            'company',
+            'transaction'
+        ])
             ->when($search, function ($query) use ($search) {
                 $query->where(function ($q) use ($search) {
-
                     $q->where('amount', 'LIKE', '%' . $search . '%')
                         ->orWhere('company_id', 'LIKE', '%' . $search . '%')
                         ->orWhereHas('company', function ($companyQuery) use ($search) {
                             $companyQuery->where('name', 'LIKE', '%' . $search . '%')
                                 ->orWhere('email', 'LIKE', '%' . $search . '%')
                                 ->orWhere('phone', 'LIKE', '%' . $search . '%');
-                        })
-                        ->orWhereHas('transaction', function ($transactionQuery) use ($search) {
-                            $transactionQuery->where('status', 'LIKE', '%' . $search . '%')
-                            ->orWhere('reference', 'LIKE', '%' . $search . '%');
                         });
                 });
             })
+
+            ->when($status && $status !== 'all', function ($query) use ($status) {
+                $query->whereHas('transaction', function ($transactionQuery) use ($status) {
+                    $transactionQuery->where('status', $status);
+                });
+            })
+
             ->latest()
             ->paginate($request->get('per_page', 20));
 
