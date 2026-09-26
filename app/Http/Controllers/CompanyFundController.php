@@ -45,7 +45,7 @@ class CompanyFundController extends Controller
             )
         );
     }
-        
+
     public function Deposit(Request $request)  {
         $admin = $request->user();
         $user = $request->user();
@@ -125,125 +125,43 @@ class CompanyFundController extends Controller
         }
     }
 
-    public function resolveBankAccount(Request $request): JsonResponse
-    {
-        $data = $request->validate([
-            'account_number' => ['required', 'digits:10'],
-            'bank_code' => ['required', 'string', 'max:20'],
-        ]);
-
-        $payload = $this->resolveAccountWithPaystack($data['account_number'], $data['bank_code']);
-
-        return response()->json([
-            'message' => data_get($payload, 'message', 'Account number resolved.'),
-            'data' => [
-                'account_name' => data_get($payload, 'data.account_name'),
-                'account_number' => data_get($payload, 'data.account_number', $data['account_number']),
-                'bank_name' => $this->resolveBankNameByCode($data['bank_code']),
-                'bank_code' => $data['bank_code'],
-            ],
-        ]);
-    }
-
-    private function resolveAccountWithPaystack(string $accountNumber, string $bankCode): array
-    {
-        $secretKey = (string) config('services.paystack.secret_key');
-        $baseUrl = rtrim((string) config('services.paystack.base_url'), '/');
-
-        if ($secretKey === '') {
-            throw ValidationException::withMessages([
-                'bank_code' => 'Paystack secret key is not configured.',
-            ]);
-        }
-
-        $response = Http::withToken($secretKey)
-            ->acceptJson()
-            ->get($baseUrl.'/bank/resolve', [
-                'account_number' => $accountNumber,
-                'bank_code' => $bankCode,
-            ]);
-
-        if ($response->failed()) {
-            throw ValidationException::withMessages([
-                'account_number' => $response->json('message') ?? 'Unable to validate account details.',
-            ]);
-        }
-
-        $payload = $response->json();
-
-        if (! is_array($payload) || data_get($payload, 'status') !== true) {
-            throw ValidationException::withMessages([
-                'account_number' => data_get($payload, 'message', 'Unable to validate account details.'),
-            ]);
-        }
-
-        return $payload;
-    }
-
-    private function resolveBankNameByCode(string $bankCode): ?string
-    {
-        $secretKey = (string) config('services.paystack.secret_key');
-        $baseUrl = rtrim((string) config('services.paystack.base_url'), '/');
-
-        if ($secretKey === '') {
-            return null;
-        }
-
-        $response = Http::withToken($secretKey)
-            ->acceptJson()
-            ->get($baseUrl.'/bank', [
-                'country' => 'nigeria',
-                'code' => $bankCode,
-            ]);
-
-        if ($response->failed()) {
-            return null;
-        }
-
-        $banks = data_get($response->json(), 'data', []);
-
-        if (! is_array($banks) || $banks === []) {
-            return null;
-        }
-
-        $matchingBank = collect($banks)->first(static function ($bank) use ($bankCode) {
-            return strtolower((string) data_get($bank, 'code', '')) === strtolower($bankCode);
-        });
-
-        return is_array($matchingBank) ? data_get($matchingBank, 'name') : null;
-    }
-
-    public function listBanks(Request $request): JsonResponse
+    public function listFlutterwaveBanks(Request $request): JsonResponse
     {
         $request->validate([
             'search' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $secretKey = config('services.paystack.secret_key');
-        $baseUrl = rtrim(config('services.paystack.base_url'), '/');
+        $secretKey = config('services.flutterwave.secret_key');
 
         if (!$secretKey) {
             return response()->json([
                 'status' => false,
-                'message' => 'Paystack secret key is not configured.'
+                'message' => 'Flutterwave secret key is not configured.'
             ], 500);
         }
 
         $response = Http::withToken($secretKey)
             ->acceptJson()
-            ->get($baseUrl . '/bank', [
-                'country' => 'nigeria',
-                'perPage' => 100,
-            ]);
+            ->get('https://api.flutterwave.com/v3/banks/NG');
 
         if ($response->failed()) {
             return response()->json([
                 'status' => false,
-                'message' => $response->json('message') ?? 'Unable to fetch banks.'
+                'message' => $response->json('message') ?? 'Unable to fetch banks.',
+                'error' => $response->json()
             ], $response->status());
         }
 
-        $banks = collect($response->json('data', []));
+        $payload = $response->json();
+
+        if (($payload['status'] ?? null) !== 'success') {
+            return response()->json([
+                'status' => false,
+                'message' => $payload['message'] ?? 'Unable to fetch banks.'
+            ], 400);
+        }
+
+        $banks = collect($payload['data'] ?? []);
 
         if ($request->filled('search')) {
             $search = strtolower(trim($request->search));
@@ -259,6 +177,7 @@ class CompanyFundController extends Controller
         $banks = $banks
             ->map(function ($bank) {
                 return [
+                    'id' => $bank['id'] ?? null,
                     'name' => $bank['name'] ?? null,
                     'code' => $bank['code'] ?? null,
                 ];
@@ -270,6 +189,192 @@ class CompanyFundController extends Controller
             'message' => 'Banks fetched successfully.',
             'data' => $banks
         ], 200);
+    }
+
+    public function resolveFlutterwaveBankAccount(Request $request): JsonResponse
+    {
+        $request->merge([
+            'account_number' => trim((string) $request->input('account_number')),
+            'bank_code' => trim((string) $request->input('bank_code')),
+        ]);
+
+        $request->validate([
+            'account_number' => ['required','string','regex:/^\d{10}$/',],
+            'bank_code' => ['required','string','max:20',],
+        ]);
+
+        try {
+            $secretKey = config('services.flutterwave.secret_key');
+
+            if (!$secretKey) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Flutterwave secret key is not configured.'
+                ], 500);
+            }
+
+            $accountNumber = $request->account_number;
+            $bankCode = $request->bank_code;
+
+            $response = Http::withToken($secretKey)
+                ->withHeaders([
+                    'Accept' => 'application/json',
+                    'Content-Type' => 'application/json',
+                ])
+                ->timeout(60)
+                ->post(
+                    'https://api.flutterwave.com/v3/accounts/resolve',
+                    [
+                        'account_number' => $accountNumber,
+                        'account_bank' => $bankCode,
+                    ]
+                );
+
+            $body = $response->json();
+
+            Log::info('Flutterwave Bank Account Resolution', [
+                'account_number' => $accountNumber,
+                'bank_code' => $bankCode,
+                'http_status' => $response->status(),
+                'successful' => $response->successful(),
+                'response' => $body,
+            ]);
+
+            if (!$response->successful()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => data_get(
+                        $body,
+                        'message',
+                        'Unable to resolve bank account.'
+                    ),
+                    'error' => $body,
+                ], $response->status());
+            }
+
+            if (($body['status'] ?? null) !== 'success') {
+                return response()->json([
+                    'status' => false,
+                    'message' => data_get(
+                        $body,
+                        'message',
+                        'Unable to resolve bank account.'
+                    ),
+                    'error' => $body,
+                ], 422);
+            }
+
+            $accountData = data_get($body, 'data', []);
+
+            $accountName = data_get($accountData, 'account_name');
+            $resolvedAccountNumber = data_get(
+                $accountData,
+                'account_number',
+                $accountNumber
+            );
+
+            if (!$accountName) {
+                Log::warning('Flutterwave Missing Account Name', [
+                    'account_number' => $accountNumber,
+                    'bank_code' => $bankCode,
+                    'response' => $body,
+                ]);
+
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Flutterwave could not return the account name.',
+                    'error' => $body,
+                ], 422);
+            }
+
+            $bankName = $this->getFlutterwaveBankName($bankCode,$secretKey);
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Account resolved successfully.',
+                'data' => [
+                    'account_name' => $accountName,
+                    'account_number' => $resolvedAccountNumber,
+                    'bank_code' => $bankCode,
+                    'bank_name' => $bankName,
+                ],
+            ], 200);
+
+        } catch (\Throwable $e) {
+
+            Log::error('Flutterwave Bank Account Resolution Exception', [
+                'account_number' => $request->account_number ?? null,
+                'bank_code' => $request->bank_code ?? null,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return response()->json([
+                'status' => false,
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    private function getFlutterwaveBankName(string $bankCode,string $secretKey
+    ): ?string {
+        try {
+            $response = Http::withToken($secretKey)
+                ->withHeaders([
+                    'Accept' => 'application/json',
+                    'Content-Type' => 'application/json',
+                ])
+                ->timeout(60)
+                ->get(
+                    'https://api.flutterwave.com/v3/banks/NG'
+                );
+
+            $body = $response->json();
+
+            Log::info('Flutterwave Bank List', [
+                'bank_code' => $bankCode,
+                'status' => $response->status(),
+                'response' => $body,
+            ]);
+
+            if (!$response->successful()) {
+                return null;
+            }
+
+            if (($body['status'] ?? null) !== 'success') {
+                return null;
+            }
+
+            $banks = data_get($body, 'data', []);
+
+            if (!is_array($banks)) {
+                return null;
+            }
+
+            foreach ($banks as $bank) {
+                if (!is_array($bank)) {
+                    continue;
+                }
+
+                $code = data_get($bank, 'code');
+                $name = data_get($bank, 'name');
+
+                if ((string) $code === (string) $bankCode) {
+                    return $name;
+                }
+            }
+
+            return null;
+
+        } catch (\Throwable $e) {
+            Log::error('Flutterwave Get Bank Name Exception', [
+                'bank_code' => $bankCode,
+                'message' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
     }
 
     public function getDeposit(Request $request)
