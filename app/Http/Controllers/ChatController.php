@@ -27,15 +27,14 @@ class ChatController extends Controller
 
         $this->ensureDefaultMessageExists($user);
 
-        $messages = Message::query()
+        $messages = Message::with([
+            'sender:id,name,email,role',
+            'receiver:id,name,email,role',
+        ])
             ->where(function ($query) use ($user) {
                 $query->where('sender_id', $user->id)
                     ->orWhere('receiver_id', $user->id);
             })
-            ->with([
-                'sender:id,name,email,role',
-                'receiver:id,name,email,role',
-            ])
             ->orderBy('created_at', 'asc')
             ->get();
 
@@ -44,6 +43,60 @@ class ChatController extends Controller
             'message' => 'Support messages fetched successfully.',
             'data' => $this->groupMessages($messages),
         ]);
+    }
+
+    private function groupMessages($messages)
+    {
+        return $messages
+            ->groupBy(function ($message) {
+
+                $date = Carbon::parse($message->created_at);
+                if ($date->isToday()) {
+                    return 'Today';
+                }
+
+                if ($date->isYesterday()) {
+                    return 'Yesterday';
+                }
+
+                return $date->format('F j, Y');
+            })
+            ->map(function ($dayMessages, $day) {
+
+                return [
+                    'day' => $day,
+                    'messages' => $dayMessages
+                        ->map(function ($msg) {
+
+                            $createdAt = Carbon::parse($msg->created_at);
+                            return [
+                                'id' => $msg->id,
+                                'sender_id' => $msg->sender ? [
+                                    'id' => $msg->sender->id,
+                                    'name' => $msg->sender->name,
+                                    'email' => $msg->sender->email,
+                                    'role' => $msg->sender->role,
+                                ] : null,
+
+                                'receiver_id' => $msg->receiver ? [
+                                    'id' => $msg->receiver->id,
+                                    'name' => $msg->receiver->name,
+                                    'email' => $msg->receiver->email,
+                                    'role' => $msg->receiver->role,
+                                ] : null,
+
+                                'message' => $msg->message,
+                                'is_read' => (bool) $msg->is_read,
+                                'time' => $createdAt->format('g:i A'),
+                                'created_at' => $msg->created_at,
+
+                                'is_sender' => $msg->sender_id === Auth::id(),
+                            ];
+                        })
+                        ->values(),
+                ];
+            })
+            ->values();
     }
 
     public function sendMessageToAdmin(Request $request): JsonResponse
@@ -319,46 +372,6 @@ class ChatController extends Controller
             'message' => 'Unread message count fetched successfully.',
             'data' => ['unread_count' => $count,],
         ]);
-    }
-
-    private function groupMessages($messages)
-    {
-        return $messages
-            ->groupBy(function ($message) {
-
-                $date = Carbon::parse($message->created_at);
-                if ($date->isToday()) {
-                    return 'Today';
-                }
-
-                if ($date->isYesterday()) {
-                    return 'Yesterday';
-                }
-
-                return $date->format('F j, Y');
-            })
-            ->map(function ($dayMessages, $day) {
-                return [
-                    'day' => $day,
-                    'messages' => $dayMessages
-                        ->map(function ($msg) {
-                            $createdAt = Carbon::parse($msg->created_at);
-
-                            return [
-                                'id' => $msg->id,
-                                'sender_id' => $msg->sender_id,
-                                'receiver_id' => $msg->receiver_id,
-                                'message' => $msg->message,
-                                'is_read' => (bool) $msg->is_read,
-                                'time' => $createdAt->format('g:i A'),
-                                'created_at' => $msg->created_at,
-                                'is_sender' =>$msg->sender_id === Auth::id(),
-                            ];
-                        })
-                        ->values(),
-                ];
-            })
-            ->values();
     }
 
     private function ensureDefaultMessageExists(User $user): void

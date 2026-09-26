@@ -58,5 +58,10 @@ class User extends Authenticatable
     {
         return $this->belongsTo(Tier::class, 'tiers');
     }
+
+    public function message()
+    {
+        return $this->belongsTo(Message::class);
+    }
 }
 

@@ -8,6 +8,6 @@ class PaymentController extends Controller
 {
     public function trigeerPayroll(Request $request)
     {
-        
+     
     }
 }
