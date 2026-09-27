@@ -349,7 +349,7 @@ class PaymentController extends Controller
             ], 500);
         }
     }
-    
+
     public function companyPayment(Request $request)
     {
         $user = $request->user();
@@ -670,6 +670,216 @@ class PaymentController extends Controller
                 'total_groups' => $totalGroups,
                 'last_page'    => $lastPage,
                 'has_more'     => $currentPage < $lastPage,
+            ],
+        ], 200);
+    }
+
+    public function adminPaymentHistory(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        if ($user->role !== 'admin') {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Unauthorized.'
+            ], 403);
+        }
+
+        $perPage = (int) $request->query('per_page', 10);
+
+        if ($perPage < 1) {
+            $perPage = 10;
+        }
+
+        if ($perPage > 100) {
+            $perPage = 100;
+        }
+
+        $status   = $request->query('status');
+        $name     = trim($request->query('name', ''));
+        $dateFrom = $request->query('date_from');
+        $dateTo   = $request->query('date_to');
+        $amount   = $request->query('amount');
+
+        $allowedStatuses = [
+            'pending',
+            'successful',
+            'failed',
+            'cancelled',
+        ];
+
+        if ($status && $status !== 'all' && !in_array($status, $allowedStatuses)
+        ) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Invalid status.',
+                'allowed' => $allowedStatuses,
+            ], 422);
+        }
+
+        $dateFromCarbon = null;
+
+        if ($dateFrom) {
+            try {
+                $dateFromCarbon = \Carbon\Carbon::parse($dateFrom)
+                    ->startOfDay();
+            } catch (\Exception $e) {
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Invalid date_from. Use YYYY-MM-DD.'
+                ], 422);
+            }
+        }
+
+        $dateToCarbon = null;
+
+        if ($dateTo) {
+            try {
+                $dateToCarbon = \Carbon\Carbon::parse($dateTo)
+                    ->endOfDay();
+            } catch (\Exception $e) {
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Invalid date_to. Use YYYY-MM-DD.'
+                ], 422);
+            }
+        }
+
+        if ($dateFromCarbon && $dateToCarbon && $dateFromCarbon->gt($dateToCarbon)
+        ) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'date_from cannot be greater than date_to.'
+            ], 422);
+        }
+
+        $query = \App\Models\Payment::query()
+            ->with([
+                'employee:id,company_id,first_name,last_name,email,phone,address,job_title,paying,employment_type,bank_name,account_name,account_number,estimate_pay,deduction_amount,bank_code',
+
+                'employee.company:id,name,user_id',
+            ]);
+
+        if ($name !== '') {
+            $query->whereHas('employee.company', function ($companyQuery) use ($name) {
+                $companyQuery->where('name', 'LIKE', '%' . $name . '%');
+            });
+        }
+
+        if ($status && $status !== 'all') {
+            $query->where('status', $status);
+        }
+
+        if ($amount !== null && $amount !== '') {
+            if (!is_numeric($amount)) {
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Amount must be a valid number.'
+                ], 422);
+            }
+            $query->where('amount', $amount);
+        }
+
+        if ($dateFromCarbon) {
+            $query->where(
+                'payment_date',
+                '>=',
+                $dateFromCarbon->toDateTimeString()
+            );
+        }
+
+        if ($dateToCarbon) {
+            $query->where(
+                'payment_date',
+                '<=',
+                $dateToCarbon->toDateTimeString()
+            );
+        }
+
+        $payments = $query
+            ->orderBy('payment_date', 'desc')
+            ->orderBy('created_at', 'desc')
+            ->paginate($perPage);
+
+        $data = $payments->getCollection()->map(function ($payment) {
+            $employee = $payment->employee;
+            $company  = $employee?->company;
+
+            return [
+                'id' => $payment->id,
+                'employee_id' => $payment->employee_id,
+                'employee_name' => $payment->employee_name,
+                'amount' => (float) $payment->amount,
+                'payment_date' => $payment->payment_date
+                    ? \Carbon\Carbon::parse($payment->payment_date)
+                        ->format('Y-m-d')
+                    : null,
+                'reference' => $payment->reference,
+                'status' => $payment->status,
+                'created_at' => $payment->created_at
+                    ? $payment->created_at->format('Y-m-d H:i:s')
+                    : null,
+                'updated_at' => $payment->updated_at
+                    ? $payment->updated_at->format('Y-m-d H:i:s')
+                    : null,
+                'company' => $company ? [
+                    'id' => $company->id,
+                    'name' => $company->name,
+                ] : null,
+                'employee' => $employee ? [
+                    'id' => $employee->id,
+                    'company_id' => $employee->company_id,
+                    'first_name' => $employee->first_name,
+                    'last_name' => $employee->last_name,
+                    'full_name' => trim(
+                        $employee->first_name . ' ' .
+                        $employee->last_name
+                    ),
+                    'email' => $employee->email,
+                    'phone' => $employee->phone,
+                    'address' => $employee->address,
+                    'job_title' => $employee->job_title,
+                    'paying' => $employee->paying,
+                    'employment_type' => $employee->employment_type,
+                    'bank_name' => $employee->bank_name,
+                    'account_name' => $employee->account_name,
+                    'account_number' => $employee->account_number,
+                    'estimate_pay' => (float) $employee->estimate_pay,
+                    'deduction_amount' => (float) $employee->deduction_amount,
+                    'bank_code' => $employee->bank_code,
+                ] : null,
+            ];
+        });
+
+        return response()->json([
+            'status'  => true,
+            'message' => 'Payment history fetched successfully.',
+            'filters' => [
+                'status'    => $status ?: 'all',
+                'name'      => $name ?: null,
+                'date_from' => $dateFrom ?: null,
+                'date_to'   => $dateTo ?: null,
+                'amount'    => $amount !== null && $amount !== ''
+                    ? (float) $amount
+                    : null,
+            ],
+
+            'data' => $data,
+            'pagination' => [
+                'current_page' => $payments->currentPage(),
+                'per_page'     => $payments->perPage(),
+                'total'        => $payments->total(),
+                'last_page'    => $payments->lastPage(),
+                'from'         => $payments->firstItem(),
+                'to'           => $payments->lastItem(),
+                'has_more'     => $payments->hasMorePages(),
             ],
         ], 200);
     }

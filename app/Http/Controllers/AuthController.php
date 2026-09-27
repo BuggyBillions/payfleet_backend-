@@ -9,11 +9,14 @@ use App\Models\Company;
 use App\Models\Deposit;
 use App\Models\Employees;
 use App\Models\Notification;
+use App\Models\Payment;
 use App\Models\Tier;
+use App\Models\TierUpgradeRequest;
 use App\Models\Transaction;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -575,31 +578,127 @@ class AuthController extends Controller
 
     }
 
-    public function adminStats(Request $request)
+    public function adminStats(Request $request): JsonResponse
     {
         $user = $request->user();
 
-        if (!$this->canManageUsers($user)) {
+        if (!$this->isFullAdmin($user)) {
             return response()->json([
                 'status'  => false,
                 'message' => 'Unauthorized'
             ], 401);
         }
 
-        $totalCompanies = Company::count();
-        $totalEmployees = Employees::count();
-        $activeAccounts = User::count();
-        $platformVolume = Transaction::where('transaction_type', 'deposit')
+        $successfulDeposits = Transaction::where('transaction_type', 'deposit')
+            ->where('status', 'successful')
             ->sum('amount');
 
-        $tiers =Tier::latest()->get();
+        $activeCompanies = Company::whereExists(function ($query) {
+            $query->select(DB::raw(1))
+                ->from('users')
+                ->whereColumn('users.id', 'companies.user_id')
+                ->where('users.is_active', 1);
+        })->count();
+
+        $activeCompaniesActive = Company::whereExists(function ($query) {
+            $query->select(DB::raw(1))
+                ->from('users')
+                ->whereColumn('users.id', 'companies.user_id')
+                ->where('users.is_active', 1)
+                ->where('is_verified', 1);
+        })->count();
+
+        $activeCompaniesVerified = Company::whereExists(function ($query) {
+            $query->select(DB::raw(1))
+                ->from('users')
+                ->whereColumn('users.id', 'companies.user_id')
+                ->where('users.is_active', 1)
+                ->where('is_verified', 1);
+        })->count();
+
+        $pendingVerifications = TierUpgradeRequest::where('status', 'pending')
+            ->count();
+
+        $successfulVerifications = TierUpgradeRequest::where('status', 'approved')
+            ->count();
+
+        $clearedLiquidity = Transaction::where('transaction_type', 'deposit')
+            ->where('status', 'successful')
+            ->sum('amount');
+
+        $pendingLiquidity = Transaction::where('transaction_type', 'deposit')
+            ->where('status', 'pending')
+            ->sum('amount');
+
+        $completedPayouts = Payment::where('status', 'successful')
+            ->count();
+
+        $disbursementAmount = Payment::where('status', 'successful')
+            ->sum('amount');
+
+        $pendingDisbursementAmount = Payment::where('status', 'pending')
+            ->sum('amount');
+
+        $systemStaff = User::whereIn('role', ['finance','support'
+        ])->count();
+
+        $activeStaff = User::whereIn('role', ['finance','support'])
+            ->where('is_active', 1)
+            ->count();
+
+        $tiers = Tier::latest()->get();
 
         return response()->json([
-            'message' => 'Dashboard stats',
-            'total_companies' => $totalCompanies,
-            'total_employees' => $totalEmployees,
-            'active_account' => $activeAccounts,
-            'tiers' => $tiers,
-        ]);
+            'status' => true,
+            'message' => 'Dashboard stats fetched successfully.',
+
+            'data' => [
+                'platform_volume' => [
+                    'amount' => (float) $successfulDeposits,
+                    'formatted' => '₦' . number_format($successfulDeposits, 2),
+                    'description' => 'Successful deposits',
+                ],
+                'active_companies' => [
+                    'total' => $activeCompanies,
+                    'active' => $activeCompaniesActive,
+                    'verified' => $activeCompaniesVerified,
+                    'description' => 'Active companies',
+                ],
+
+                'pending_verifications' => [
+                    'pending' => $pendingVerifications,
+                    'successful' => $successfulVerifications,
+                    'description' => 'KYC / RC Review',
+                ],
+
+                'cleared_liquidity' => [
+                    'cleared' => (float) $clearedLiquidity,
+                    'cleared_formatted' => '₦' . number_format($clearedLiquidity, 2),
+
+                    'pending' => (float) $pendingLiquidity,
+                    'pending_formatted' => '₦' . number_format($pendingLiquidity, 2),
+
+                    'description' => 'Deposit liquidity',
+                ],
+                'disbursements' => [
+                    'amount' => (float) $disbursementAmount,
+                    'formatted' => '₦' . number_format($disbursementAmount, 2),
+                    'completed_payouts' => $completedPayouts,
+                    'pending_amount' => (float) $pendingDisbursementAmount,
+                    'pending_formatted' => '₦' . number_format(
+                        $pendingDisbursementAmount,
+                        2
+                    ),
+
+                    'description' => 'Completed payouts',
+                ],
+                'system_staff' => [
+                    'total' => $systemStaff,
+                    'active_officers' => $activeStaff,
+                    'description' => 'Finance and support officers',
+                ],
+                'tiers' => $tiers,
+            ],
+        ], 200);
     }
 }
