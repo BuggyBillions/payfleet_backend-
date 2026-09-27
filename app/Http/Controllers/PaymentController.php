@@ -923,7 +923,7 @@ class PaymentController extends Controller
             ->with([
                 'employee:id,company_id,first_name,last_name,email,phone,address,job_title,paying,employment_type,bank_name,account_name,account_number,estimate_pay,deduction_amount,bank_code',
 
-                'employee.company:id,name,user_id',
+                'employee.company:id,name,user_id,email,about,logo,address,balance,tier',
             ]);
 
         if ($name !== '') {
@@ -1075,13 +1075,7 @@ class PaymentController extends Controller
             'status'     =>     false,
             'message'    => 'Payment History fetched successfully.',
             'data'       => $payments
-        ]);    
-        // $query = \App\Models\Payment::query()
-        //     ->with([
-        //         'employee:id,company_id,first_name,last_name,email,phone,address,job_title,paying,employment_type,bank_name,account_name,account_number,estimate_pay,deduction_amount,bank_code',
-
-        //         'employee.company:id,name,user_id',
-        //     ]);
+        ]);  
     }
     public function retryPayrollPayment(Request $request, $paymentId): JsonResponse
     {
