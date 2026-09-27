@@ -713,6 +713,7 @@ class PaymentController extends Controller
             'successful',
             'failed',
             'cancelled',
+            'processing',
         ];
 
         if ($status && $status !== 'all' && !in_array($status, $allowedStatuses)
