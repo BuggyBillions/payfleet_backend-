@@ -203,7 +203,7 @@ class PaymentController extends Controller
                     $employee->id . '-' .
                     Str::upper(Str::random(10));
 
-                $employeeName = $employee->name;
+                $employeeName = $employee->first_name;
 
                 if (!$employeeName && $employee->user_id) {
                     $employeeUser = User::find($employee->user_id);
@@ -348,5 +348,105 @@ class PaymentController extends Controller
                 'error'   => $e->getMessage(),
             ], 500);
         }
+    }
+
+    public function companyPayment(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        $company = Company::where('user_id', $user->id)->first();
+
+        if (!$company) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Company account not found.'
+            ], 404);
+        }
+
+        $perPage = (int) $request->query('per_page', 10);
+        $monthFilter = $request->query('month'); // e.g. "2025-11"
+
+        $query = \App\Models\Payment::with('employer')
+            ->orderBy('created_at', 'desc');
+
+        // ✅ Filter by specific month if provided (format: YYYY-MM)
+        if ($monthFilter) {
+            try {
+                $date = \Carbon\Carbon::createFromFormat('Y-m', $monthFilter);
+                $query->whereYear('created_at', $date->year)
+                    ->whereMonth('created_at', $date->month);
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid month format. Use YYYY-MM (e.g. 2025-11).',
+                ], 400);
+            }
+        }
+
+        $payments = $query->get();
+
+        // ✅ Group payments by month-year
+        $grouped = $payments->groupBy(function ($payment) {
+            return \Carbon\Carbon::parse($payment->created_at)->format('F Y'); // e.g. "November 2025"
+        })->map(function ($group, $key) {
+            return [
+                'month' => $key,
+                'count' => $group->count(),
+                'total_amount' => $group->sum('amount'),
+                'payments' => $group->map(function ($p) {
+                    $employer = $p->employer;
+
+                    return [
+                        'id' => $p->id,
+                        'amount' => $p->amount,
+                        'status' => "paid",
+                        'created_at' => $p->created_at->format('Y-m-d H:i:s'),
+                        'employer_details' => $employer ? [
+                            'id' => $employer->id,
+                            'full_name' => $employer->full_name,
+                            'email' => $employer->email,
+                            'company_branch' => $employer->company_branch,
+                            'recipient_code' => $employer->recipient_code,
+                            'phone' => $employer->phone,
+                            'address' => $employer->address,
+                            'country' => $employer->country,
+                            'department' => $employer->department,
+                            'jobTitle' => $employer->jobTitle,
+                        ] : null,
+                    ];
+                })->values(),
+            ];
+        })->values();
+
+        // ✅ No payments found
+        if ($grouped->isEmpty()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No salary paid for that month',
+                'data' => [],
+            ], 404);
+        }
+
+        // ✅ Pagination after grouping
+        $paginated = $grouped->forPage($request->query('page', 1), $perPage);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Payments grouped successfully',
+            'data' => $paginated->values(),
+            'pagination' => [
+                'current_page' => (int) $request->query('page', 1),
+                'per_page' => $perPage,
+                'total_groups' => $grouped->count(),
+                'last_page' => ceil($grouped->count() / $perPage),
+            ]
+        ]);
     }
 }
