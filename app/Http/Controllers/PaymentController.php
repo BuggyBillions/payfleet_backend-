@@ -42,6 +42,14 @@ class PaymentController extends Controller
         ));
     }
 
+    private function canManagePayment(User $user) : bool {
+        return($user->is_active  == 1 &&(
+           $this->isFullAdmin($user) ||
+           $this->isFinance($user) ||
+           $this->isFullCompany($user)
+        ));
+    }
+
     public function trigerPayroll(Request $request): JsonResponse
     {
         $admin = $request->user();
@@ -777,6 +785,51 @@ class PaymentController extends Controller
                 'has_more'     => $currentPage < $lastPage,
             ],
         ], 200);
+    }
+
+    public function EachCompanyPayment(Request $request , $id)
+    {
+        $user  = $request->user();
+
+        if(!$user){
+            return response()->json([
+                'status'   =>  false,
+                'message'  =>  'Unauthenticated to access this endpoint.'
+            ]);
+        }
+
+        if(!$this->canManagePayment($user)){
+            return response()->json([
+                'status'   =>  false,
+                'message'  =>  'Unathorized to access this endpoint.'
+            ]);   
+        }
+
+        $company = Company::where('user_id', $user->id)->first();
+        
+        if(!$company){
+            return response()->json([
+                'status'  =>  false,
+                'message' =>  'Company account not found.'
+            ]);
+        }
+
+        $company = Payment::with('employee')
+            ->where('id', $id)
+            ->first();
+        
+        if(!$company){
+            return response()->json([
+                'status'    =>   false,
+                'message'   =>   'Payment record not found'
+            ], 404);
+        }    
+
+        return response()->json([
+            'status'    =>  'true',
+            'message'   =>  'Company payment history fetched succesfully.',
+            'data'      =>   $company
+        ]);
     }
   
     public function adminPaymentHistory(Request $request)

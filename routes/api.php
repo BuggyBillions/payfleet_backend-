@@ -92,6 +92,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('delete-deduction/{id}', [EmployeeController::class, 'deleteDeduction']);
     Route::get('my-tier-request', [CompanyProfileController::class, 'myTier']);
     Route::get('company-salary-payments', [PaymentController::class, 'companyPayment']);
+    Route::get('each-company-salary-payments/{id}', [PaymentController::class, 'EachCompanyPayment']);
 
     // funding
     Route::post('company-funding', [CompanyFundController::class, 'Deposit']);
