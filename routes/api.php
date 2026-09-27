@@ -107,6 +107,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('confirm-deposit/{id}',[AdminActionsController::class, 'confirmDeposit']);
     Route::put('update-staff/{id}', [AdminActionsController::class , 'updateOfficer']);
     Route::put('decline-deposit/{id}',[AdminActionsController::class, 'declineDeposit']);
+    Route::post('retry-payroll', [PaymentController::class, 'retryPayrollPayment']);
 });
 
 // tier
