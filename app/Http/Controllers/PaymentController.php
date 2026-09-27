@@ -25,7 +25,7 @@ class PaymentController extends Controller
         return $user->role === 'company';
     } 
 
-        public function trigerPayroll(Request $request): JsonResponse
+    public function trigerPayroll(Request $request): JsonResponse
     {
         $admin = $request->user();
 

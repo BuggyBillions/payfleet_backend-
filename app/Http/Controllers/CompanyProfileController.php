@@ -732,4 +732,45 @@ class CompanyProfileController extends Controller
             ]
         ], 200);
     }
+
+    public function myTier(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        $company = Company::where('user_id', $user->id)->first();
+
+        if (!$company) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Company account not found.'
+            ], 404);
+        }
+        $search = $request->input('search');
+
+        $employees = TierUpgradeRequest::where('company_id', $company->id)
+            ->with('company')
+            ->when($search, function ($query) use ($search) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('status', 'LIKE', '%' . $search . '%')
+                        ->orWhere('company_id', 'LIKE', '%' . $search . '%')
+                        ->orWhere('requested_tier', 'LIKE', '%' . $search . '%')
+                        ->orWhere('admin_note', 'LIKE', '%' . $search . '%');
+                });
+            })
+            ->latest()
+            ->paginate($request->get('per_page', 20));
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Employees fetched successfully.',
+            'data' => $employees
+        ], 200);
+    }
 }

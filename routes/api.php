@@ -87,6 +87,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('all-deductions', [EmployeeController::class, 'AlldeductedEmployee']);
     Route::get('company-employee-deduction',[EmployeeController::class, 'companyDeduction']);
     Route::delete('delete-deduction/{id}', [EmployeeController::class, 'deleteDeduction']);
+    Route::get('my-tier-request', [CompanyProfileController::class, 'myTier']);
 
     // funding
     Route::post('company-funding', [CompanyFundController::class, 'Deposit']);
