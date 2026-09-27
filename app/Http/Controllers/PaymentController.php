@@ -25,6 +25,11 @@ class PaymentController extends Controller
         return $user->role === 'company';
     } 
 
+    private function isFullAdmin(User $user) : bool
+    {
+        return $user->role === 'admin';
+    } 
+
     private function isFinance(User $user) : bool 
     {
         return $user->role === 'finance';
@@ -32,7 +37,7 @@ class PaymentController extends Controller
 
     private function canManageUsers(User $user) : bool{
         return($user->is_active == 1 &&(
-            $this->isFullCompany($user) ||
+            $this->isFullAdmin($user) ||
             $this->isFinance($user)
         ));
     }
