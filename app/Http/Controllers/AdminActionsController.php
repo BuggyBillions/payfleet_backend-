@@ -56,7 +56,8 @@ class AdminActionsController extends Controller
         ], 200);
     }
 
-    public function eachCompanies(Request $request , $id) {
+    public function eachCompanies(Request $request , $id) 
+    {
         $admin = $request->user();
 
         if(!$this->canManageUsers($admin)){
@@ -304,7 +305,8 @@ class AdminActionsController extends Controller
         ]);
     }
 
-    public function eachStaff(Request $request , $id) {
+    public function eachStaff(Request $request , $id) 
+    {
         $admin = $request->user();
 
         if(!$this->isFullAdmin($admin)){
@@ -347,7 +349,8 @@ class AdminActionsController extends Controller
         ]);
     }
 
-    public function deactivateUser(  Request $request,   $id): JsonResponse {
+    public function deactivateUser(  Request $request,   $id): JsonResponse 
+    {
         $admin = $request->user();
 
         if (!$this->isFullAdmin($admin)) {
@@ -391,7 +394,8 @@ class AdminActionsController extends Controller
         ]);
     }
 
-    public function activateUser(  Request $request,   $id): JsonResponse {
+    public function activateUser(  Request $request,   $id): JsonResponse 
+    {
         $admin = $request->user();
         if (!$this->canManageUsers($admin)) {
             return response()->json([
@@ -425,7 +429,8 @@ class AdminActionsController extends Controller
         ]);
     } 
 
-    public function deleteUser(  Request $request,  $id): JsonResponse {
+    public function deleteUser(  Request $request,  $id): JsonResponse 
+    {
         $admin = $request->user();
         if (!$this->isFullAdmin($admin)) {
             return response()->json([
@@ -1340,5 +1345,4 @@ class AdminActionsController extends Controller
             ], 500);
         }
     }
-    
 }
