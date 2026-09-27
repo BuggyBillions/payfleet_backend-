@@ -991,6 +991,12 @@ class PaymentController extends Controller
                 'company' => $company ? [
                     'id' => $company->id,
                     'name' => $company->name,
+                    'user_id' => $company->user_id,
+                    'email' => $company->email,
+                    'about' => $company->about,
+                    'address' => $company->address,
+                    'balance' => $company->balace,
+                    'tier'   => $company->tier
                 ] : null,
                 'employee' => $employee ? [
                     'id' => $employee->id,
