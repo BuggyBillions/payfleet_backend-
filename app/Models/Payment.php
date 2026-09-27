@@ -20,6 +20,6 @@ class Payment extends Model
 
     public function employee()
     {
-        return $this->belongsTo(Employee::class);
+        return $this->belongsTo(Employees::class, 'employee_id', 'id');
     }
 }

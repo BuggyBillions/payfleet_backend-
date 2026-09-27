@@ -530,7 +530,7 @@ class PaymentController extends Controller
                 'status'  => false,
                 'message' => 'No salary payment found.',
                 'data'    => [],
-            ], 404);
+            ], 402);
         }
 
         $grouped = $payments
