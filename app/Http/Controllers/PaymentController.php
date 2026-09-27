@@ -1009,7 +1009,7 @@ class PaymentController extends Controller
         }
         
         $payments = Payment::with(['employee'])
-            ->where('payment')
+            ->where('id', $id)
             ->first();
 
         if(!$payments){
