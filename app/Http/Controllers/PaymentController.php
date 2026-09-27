@@ -13,6 +13,7 @@ use Carbon\Carbon;
 use App\Models\Company;
 use App\Models\Employees;
 use App\Models\Deduction;
+use App\Models\Notification;
 use App\Models\Payment;
 use App\Models\Transaction;
 use Illuminate\Support\Facades\Hash;
@@ -24,7 +25,7 @@ class PaymentController extends Controller
         return $user->role === 'company';
     } 
 
-    public function trigerPayroll(Request $request): JsonResponse
+        public function trigerPayroll(Request $request): JsonResponse
     {
         $admin = $request->user();
 
@@ -58,11 +59,20 @@ class PaymentController extends Controller
             ], 403);
         }
 
-        if (!Hash::check($validated['pin'], $company->pin)) {
+        if (!$company->pin || !Hash::check($validated['pin'], $company->pin)) {
             return response()->json([
                 'status'  => false,
                 'message' => 'Invalid PIN.',
             ], 422);
+        }
+
+        $flutterwaveSecretKey = config('services.flutterwave.secret_key');
+
+        if (!$flutterwaveSecretKey) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Flutterwave secret key is not configured.',
+            ], 500);
         }
 
         DB::beginTransaction();
@@ -72,8 +82,8 @@ class PaymentController extends Controller
                 ->get();
 
             if ($employees->isEmpty()) {
-                DB::rollBack();
 
+                DB::rollBack();
                 return response()->json([
                     'status'  => false,
                     'message' => 'No employees found for this company.',
@@ -82,22 +92,14 @@ class PaymentController extends Controller
 
             $results = [];
 
-            $totalEmployees = $employees->count();
-            $totalPaid = 0;
-            $totalSkipped = 0;
-            $totalFailed = 0;
+            $totalEmployees  = $employees->count();
+            $totalPaid       = 0;
+            $totalSkipped    = 0;
+            $totalFailed     = 0;
             $totalDeductions = 0;
+            $totalAmountPaid = 0;
 
-            $flutterwaveSecretKey = config('services.flutterwave.secret_key');
-
-            if (!$flutterwaveSecretKey) {
-                DB::rollBack();
-
-                return response()->json([
-                    'status'  => false,
-                    'message' => 'Flutterwave secret key is not configured.',
-                ], 500);
-            }
+            $payrollMonth = now()->format('Y-m');
 
             foreach ($employees as $employee) {
                 if ((int) $employee->paying !== 1) {
@@ -108,6 +110,23 @@ class PaymentController extends Controller
                         'status'      => 'skipped',
                         'reason'      => 'Employee is not marked for payment.',
                     ];
+                    continue;
+                }
+
+                $alreadyPaid = Payment::where('employee_id', $employee->id)
+                    ->where('status', 'successful')
+                    ->whereYear('payment_date', now()->year)
+                    ->whereMonth('payment_date', now()->month)
+                    ->exists();
+
+                if ($alreadyPaid) {
+
+                    $totalSkipped++;
+                    $results[] = [
+                        'employee_id' => $employee->id,
+                        'status'      => 'skipped',
+                        'reason'      => 'Employee has already been paid for this month.',
+                    ];
 
                     continue;
                 }
@@ -115,8 +134,8 @@ class PaymentController extends Controller
                 $estimatePay = (float) $employee->estimate_pay;
 
                 if ($estimatePay <= 0) {
-
                     $totalSkipped++;
+
                     $results[] = [
                         'employee_id' => $employee->id,
                         'status'      => 'skipped',
@@ -131,19 +150,18 @@ class PaymentController extends Controller
                     ->first();
 
                 $deductionAmount = 0;
+
                 if ($deduction) {
+
                     $createdDate = Carbon::parse($deduction->created_at);
                     $noOfMonths = (int) $deduction->no_of_month;
-
                     if ($noOfMonths > 0) {
-
                         $deductionEndDate = $createdDate
                             ->copy()
                             ->addMonths($noOfMonths);
+
                         if (now()->lt($deductionEndDate)) {
-
                             $deductionAmount = (float) $deduction->amount;
-
                             $totalDeductions += $deductionAmount;
                         }
                     }
@@ -156,15 +174,14 @@ class PaymentController extends Controller
                 }
 
                 if ($netSalary <= 0) {
-
                     $totalSkipped++;
                     $results[] = [
-                        'employee_id'       => $employee->id,
-                        'status'            => 'skipped',
-                        'reason'            => 'Net salary is zero after deduction.',
-                        'estimate_pay'      => $estimatePay,
-                        'deduction'         => $deductionAmount,
-                        'net_salary'        => $netSalary,
+                        'employee_id'  => $employee->id,
+                        'status'       => 'skipped',
+                        'reason'       => 'Net salary is zero after deduction.',
+                        'estimate_pay' => $estimatePay,
+                        'deduction'    => $deductionAmount,
+                        'net_salary'   => $netSalary,
                     ];
 
                     continue;
@@ -172,15 +189,12 @@ class PaymentController extends Controller
 
                 if (empty($employee->account_number) || empty($employee->bank_code)
                 ) {
-
                     $totalSkipped++;
-
                     $results[] = [
                         'employee_id' => $employee->id,
                         'status'      => 'skipped',
                         'reason'      => 'Employee bank details are incomplete.',
                     ];
-
                     continue;
                 }
 
@@ -189,100 +203,145 @@ class PaymentController extends Controller
                     $employee->id . '-' .
                     Str::upper(Str::random(10));
 
-                
-                $response = Http::withToken($flutterwaveSecretKey)
-                    ->acceptJson()
-                    ->post('https://api.flutterwave.com/v3/transfers', [
-                        'account_bank'    => $employee->bank_code,
-                        'account_number'  => $employee->account_number,
-                        'amount'          => $netSalary,
-                        'currency'        => 'NGN',
-                        'beneficiary_name'=> $employee->name ?? 'Employee',
-                        'reference'       => $reference,
-                        'debit_currency'  => 'NGN',
-                        'narration'       => 'Salary payment',
-                    ]);
+                $employeeName = $employee->name;
 
-                if (!$response->successful()) {
+                if (!$employeeName && $employee->user_id) {
+                    $employeeUser = User::find($employee->user_id);
+                    if ($employeeUser) {
+                        $employeeName = $employeeUser->name;
+                    }
+                }
+
+                $employeeName = $employeeName ?: 'Employee';
+
+                $previousBalance = (float) $company->balance;
+
+                if ($previousBalance < $netSalary) {
 
                     $totalFailed++;
+                    $results[] = [
+                        'employee_id' => $employee->id,
+                        'status'      => 'failed',
+                        'reason'      => 'Insufficient company balance.',
+                        'salary'      => $netSalary,
+                    ];
 
+                    continue;
+                }
+
+                $response = Http::withToken($flutterwaveSecretKey)
+                    ->acceptJson()
+                    ->post(
+                        'https://api.flutterwave.com/v3/transfers',
+                        [
+                            'account_bank'     => $employee->bank_code,
+                            'account_number'   => $employee->account_number,
+                            'amount'           => $netSalary,
+                            'currency'         => 'NGN',
+                            'beneficiary_name' => $employeeName,
+                            'reference'        => $reference,
+                            'debit_currency'   => 'NGN',
+                            'narration'        => 'Salary payment',
+                        ]
+                    );
+
+                if (!$response->successful()) {
+                    $totalFailed++;
                     $results[] = [
                         'employee_id' => $employee->id,
                         'status'      => 'failed',
                         'reason'      => 'Flutterwave payment request failed.',
                         'response'    => $response->json(),
                     ];
-
                     continue;
                 }
 
                 $flutterwaveData = $response->json();
 
                 if (($flutterwaveData['status'] ?? null) !== 'success') {
-
                     $totalFailed++;
-
                     $results[] = [
                         'employee_id' => $employee->id,
                         'status'      => 'failed',
                         'reason'      => $flutterwaveData['message']
                             ?? 'Flutterwave payment failed.',
                     ];
-
                     continue;
                 }
 
-                $totalPaid++;
+                $currentBalance = $previousBalance - $netSalary;
+                $company->balance = $currentBalance;
+                $company->save();
                 Payment::create([
-                    'employee_id' => $employee->user_id ?? $admin->id,
-                    'employee_name' => $employee->user_id ?? $admin->id,
-                ]);
-                Transaction::create([
-                    'user_id'          => $employee->user_id ?? $admin->id,
-                    'amount'           => $netSalary,
-                    'transaction_type' => 'payroll',
-                    'reference'        => $reference,
-                    'status'            => 'successful',
-                    'meta'             => json_encode([
-                        'company_id'       => $company->id,
-                        'employee_id'      => $employee->id,
-                        'estimate_pay'     => $estimatePay,
-                        'deduction'        => $deductionAmount,
-                        'net_salary'       => $netSalary,
-                        'flutterwave'      => $flutterwaveData,
-                    ]),
+                    'employee_id'   => $employee->id,
+                    'employee_name' => $employeeName,
+                    'amount'        => $netSalary,
+                    'payment_date'  => now()->toDateString(),
+                    'reference'     => $reference,
+                    'status'        => 'successful',
                 ]);
 
+                Transaction::create([
+                    'company_id'       => $company->id,
+                    'reference'        => $reference,
+                    'amount'           => $netSalary,
+                    'previous_balance' => $previousBalance,
+                    'current_balance'  => $currentBalance,
+                    'type'             => 'debit',
+                    'transaction_type' => 'payroll',
+                    'status'           => 'successful',
+                    'description'      => 'Payroll payment to ' . $employeeName,
+                ]);
+
+                if ($employee->user_id) {
+                    Notification::create([
+                        'user_id'  => $employee->user_id,
+                        'title'    => 'Salary Payment',
+                        'message'  => 'Your salary payment of ₦'
+                            . number_format($netSalary, 2)
+                            . ' has been processed successfully.',
+                        'type'     => 'payroll',
+                        'is_read'  => false,
+                    ]);
+                }
+
+                $totalPaid++;
+                $totalAmountPaid += $netSalary;
+
                 $results[] = [
-                    'employee_id'       => $employee->id,
-                    'status'            => 'paid',
-                    'estimate_pay'      => $estimatePay,
-                    'deduction'         => $deductionAmount,
-                    'net_salary'        => $netSalary,
-                    'reference'         => $reference,
+                    'employee_id'  => $employee->id,
+                    'employee_name'=> $employeeName,
+                    'status'       => 'paid',
+                    'estimate_pay' => $estimatePay,
+                    'deduction'    => $deductionAmount,
+                    'net_salary'   => $netSalary,
+                    'reference'    => $reference,
                 ];
             }
 
             DB::commit();
 
             return response()->json([
-                'status' => true,
+                'status'  => true,
                 'message' => 'Payroll processing completed.',
+
                 'summary' => [
                     'total_employees'  => $totalEmployees,
                     'total_paid'       => $totalPaid,
                     'total_skipped'    => $totalSkipped,
                     'total_failed'     => $totalFailed,
                     'total_deductions' => $totalDeductions,
+                    'total_amount_paid'=> $totalAmountPaid,
+                    'remaining_balance'=> $company->balance,
+                    'payroll_month'    => $payrollMonth,
                 ],
+
                 'data' => $results,
             ]);
 
         } catch (\Throwable $e) {
 
             DB::rollBack();
-
             return response()->json([
                 'status'  => false,
                 'message' => 'Company payroll failed.',

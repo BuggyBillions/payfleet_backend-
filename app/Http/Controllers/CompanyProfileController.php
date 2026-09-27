@@ -391,7 +391,7 @@ class CompanyProfileController extends Controller
         }
 
         $validated = $request->validate([
-            'requested_tier' => ['required','integer','exists:tiers,id'],
+            'requested_tier' => ['required','integer','exists:tiers,level'],
         ]);
 
         $currentTier = (int) $company->tier;
@@ -436,7 +436,7 @@ class CompanyProfileController extends Controller
 
 
         if ($requestedTier >= 3) {
-            if (empty($company->memart)) {
+            if (empty($company->mermat)) {
                 return response()->json([
                     'status' => false,
                     'message' => 'MEMART is required before upgrading to Tier 3.'
