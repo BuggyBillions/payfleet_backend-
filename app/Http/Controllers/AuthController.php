@@ -172,7 +172,7 @@ class AuthController extends Controller
         if (!$user || !Hash::check($data['password'], $user->password)) {
             return response()->json([
                 'message' => 'Incorrect email or password'
-            ], 401);
+            ], 403);
         }
 
         if (!in_array($user->role, ['company', 'finance', 'admin', 'support'])) {
@@ -397,9 +397,20 @@ class AuthController extends Controller
                 'logo' => $user->company->logo
                     ? asset('storage/' . $user->company->logo)
                     : null,
-
-                'about' => $user->company->about,
+                'cac' => $user->company->cac
+                    ? asset('storage/' . $user->company->cac)
+                    : null,
+                'mermat' => $user->company->mermat
+                    ? asset('storage/' . $user->company->mermat)
+                    : null,        
+                
+                'status_report' => $user->company->status_report
+                    ? asset('storage/' . $user->company->status_report)
+                    : null,
+                    'about' => $user->company->about,
                 'address' => $user->company->address,
+                'bvn'     => $user->company->bvn,
+                'nin'     => $user->company->nin,
                 'created_at' => $user->company->created_at,
             ];
         }

@@ -545,5 +545,5 @@ class CompanyFundController extends Controller
             'message' => 'Deposit details fetched successfully.',
             'data' => $deposit
         ], 200);
-    }
+    } 
 }
