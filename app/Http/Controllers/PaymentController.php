@@ -1069,6 +1069,11 @@ class PaymentController extends Controller
         
         $payments = Payment::with(['employee'])
             ->where('id', $id)
+            ->with([
+                'employee:id,company_id,first_name,last_name,email,phone,address,job_title,paying,employment_type,bank_name,account_name,account_number,estimate_pay,deduction_amount,bank_code',
+
+                'employee.company:id,name,user_id,email,about,logo,address,balance,tier',
+            ])
             ->first();
 
         if(!$payments){
