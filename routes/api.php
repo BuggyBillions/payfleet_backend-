@@ -61,6 +61,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('admin-stats', [AuthController::class, 'adminStats']);
     Route::get('deposit-stats', [AuthController::class, 'depositStats']);
     Route::get('admin-payment', [PaymentController::class, 'adminPaymentHistory']);
+    Route::get('each-payment/{id}', [PaymentController::class, 'eachAdminPaymentHistory']);
 });
 
 // companies

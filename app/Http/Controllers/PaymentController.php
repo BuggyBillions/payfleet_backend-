@@ -25,6 +25,18 @@ class PaymentController extends Controller
         return $user->role === 'company';
     } 
 
+    private function isFinance(User $user) : bool 
+    {
+        return $user->role === 'finance';
+    }
+
+    private function canManageUsers(User $user) : bool{
+        return($user->is_active == 1 &&(
+            $this->isFullCompany($user) ||
+            $this->isFinance($user)
+        ));
+    }
+
     public function trigerPayroll(Request $request): JsonResponse
     {
         $admin = $request->user();
@@ -773,7 +785,7 @@ class PaymentController extends Controller
             ], 401);
         }
 
-        if ($user->role !== 'admin') {
+        if (!$this->canManageUsers($user)) {
             return response()->json([
                 'status'  => false,
                 'message' => 'Unauthorized.'
@@ -973,6 +985,46 @@ class PaymentController extends Controller
         ], 200);
     }
 
+    public function eachAdminPaymentHistory(Request $request, $id)
+    {
+       $user  = $request->user();
+       
+       if(!$user){
+            return response()->json([
+                'status'      => false,
+                'message'     => 'Unathenticated to access this.'
+            ], 401);
+       }
+
+        if (!$this->canManageUsers($user)) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Unauthorized to access this.'
+            ], 403);
+        }
+        
+        $payments = Payment::with(['employee'])
+            ->where('payment')
+            ->first();
+
+        if(!$payments){
+            return response()->json([
+                'status'  => false,
+                'message' => 'Payment History not found.'
+            ], 404);
+        }
+        return response()->json([
+            'status'     =>     false,
+            'message'    => 'Payment History fetched successfully.',
+            'data'       => $payments
+        ]);    
+        // $query = \App\Models\Payment::query()
+        //     ->with([
+        //         'employee:id,company_id,first_name,last_name,email,phone,address,job_title,paying,employment_type,bank_name,account_name,account_number,estimate_pay,deduction_amount,bank_code',
+
+        //         'employee.company:id,name,user_id',
+        //     ]);
+    }
     public function retryPayrollPayment(Request $request, $paymentId): JsonResponse
     {
         $admin = $request->user();
