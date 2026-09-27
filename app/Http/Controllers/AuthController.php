@@ -655,30 +655,23 @@ class AuthController extends Controller
             'data' => [
                 'platform_volume' => [
                     'amount' => (float) $successfulDeposits,
-                    'formatted' => '₦' . number_format($successfulDeposits, 2),
-                    'description' => 'Successful deposits',
                 ],
                 'active_companies' => [
                     'total' => $activeCompanies,
                     'active' => $activeCompaniesActive,
                     'verified' => $activeCompaniesVerified,
-                    'description' => 'Active companies',
                 ],
 
                 'pending_verifications' => [
                     'pending' => $pendingVerifications,
                     'successful' => $successfulVerifications,
-                    'description' => 'KYC / RC Review',
                 ],
 
                 'cleared_liquidity' => [
                     'cleared' => (float) $clearedLiquidity,
                     'cleared_formatted' => '₦' . number_format($clearedLiquidity, 2),
-
                     'pending' => (float) $pendingLiquidity,
                     'pending_formatted' => '₦' . number_format($pendingLiquidity, 2),
-
-                    'description' => 'Deposit liquidity',
                 ],
                 'disbursements' => [
                     'amount' => (float) $disbursementAmount,
@@ -689,13 +682,10 @@ class AuthController extends Controller
                         $pendingDisbursementAmount,
                         2
                     ),
-
-                    'description' => 'Completed payouts',
                 ],
                 'system_staff' => [
                     'total' => $systemStaff,
                     'active_officers' => $activeStaff,
-                    'description' => 'Finance and support officers',
                 ],
                 'tiers' => $tiers,
             ],
