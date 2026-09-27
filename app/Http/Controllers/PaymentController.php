@@ -371,12 +371,11 @@ class PaymentController extends Controller
         }
 
         $perPage = (int) $request->query('per_page', 10);
-        $monthFilter = $request->query('month'); // e.g. "2025-11"
+        $monthFilter = $request->query('month'); 
 
-        $query = \App\Models\Payment::with('employer')
+        $query = \App\Models\Payment::with('employees')
             ->orderBy('created_at', 'desc');
 
-        // ✅ Filter by specific month if provided (format: YYYY-MM)
         if ($monthFilter) {
             try {
                 $date = \Carbon\Carbon::createFromFormat('Y-m', $monthFilter);
@@ -392,9 +391,8 @@ class PaymentController extends Controller
 
         $payments = $query->get();
 
-        // ✅ Group payments by month-year
         $grouped = $payments->groupBy(function ($payment) {
-            return \Carbon\Carbon::parse($payment->created_at)->format('F Y'); // e.g. "November 2025"
+            return \Carbon\Carbon::parse($payment->created_at)->format('F Y'); 
         })->map(function ($group, $key) {
             return [
                 'month' => $key,
@@ -406,26 +404,24 @@ class PaymentController extends Controller
                     return [
                         'id' => $p->id,
                         'amount' => $p->amount,
-                        'status' => "paid",
+                        'status' => $p->status,
+                        'reference' => 'reference',
                         'created_at' => $p->created_at->format('Y-m-d H:i:s'),
                         'employer_details' => $employer ? [
                             'id' => $employer->id,
-                            'full_name' => $employer->full_name,
+                            'first_name' => $employer->first_name,
+                            'last_name' => $employer->last_name,
                             'email' => $employer->email,
-                            'company_branch' => $employer->company_branch,
-                            'recipient_code' => $employer->recipient_code,
                             'phone' => $employer->phone,
                             'address' => $employer->address,
-                            'country' => $employer->country,
-                            'department' => $employer->department,
-                            'jobTitle' => $employer->jobTitle,
+                            'employment_type' => $employer->employment_type,
+                            'jobTitle' => $employer->job_title,
                         ] : null,
                     ];
                 })->values(),
             ];
         })->values();
 
-        // ✅ No payments found
         if ($grouped->isEmpty()) {
             return response()->json([
                 'success' => false,
@@ -434,7 +430,6 @@ class PaymentController extends Controller
             ], 404);
         }
 
-        // ✅ Pagination after grouping
         $paginated = $grouped->forPage($request->query('page', 1), $perPage);
 
         return response()->json([

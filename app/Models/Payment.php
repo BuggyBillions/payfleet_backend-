@@ -17,4 +17,9 @@ class Payment extends Model
         'reference',
         'status'
     ];
+
+    public function employees()
+    {
+        return $this->belongsTo(Employee::class);
+    }
 }
