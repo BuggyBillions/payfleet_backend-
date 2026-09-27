@@ -632,7 +632,7 @@ class CompanyProfileController extends Controller
 
         if ($upgradeRequest->requested_tier >= 3) {
 
-            if (empty($company->memart)) {
+            if (empty($company->mermat)) {
                 return response()->json([
                     'status' => false,
                     'message' => 'Cannot approve. Company MEMART is missing.'

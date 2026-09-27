@@ -349,14 +349,14 @@ class PaymentController extends Controller
             ], 500);
         }
     }
-
+    
     public function companyPayment(Request $request)
     {
         $user = $request->user();
 
         if (!$user) {
             return response()->json([
-                'status' => false,
+                'status'  => false,
                 'message' => 'Unauthenticated.'
             ], 401);
         }
@@ -365,83 +365,313 @@ class PaymentController extends Controller
 
         if (!$company) {
             return response()->json([
-                'status' => false,
+                'status'  => false,
                 'message' => 'Company account not found.'
             ], 404);
         }
 
         $perPage = (int) $request->query('per_page', 10);
-        $monthFilter = $request->query('month'); 
 
-        $query = \App\Models\Payment::with('employees')
-            ->orderBy('created_at', 'desc');
-
-        if ($monthFilter) {
-            try {
-                $date = \Carbon\Carbon::createFromFormat('Y-m', $monthFilter);
-                $query->whereYear('created_at', $date->year)
-                    ->whereMonth('created_at', $date->month);
-            } catch (\Exception $e) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Invalid month format. Use YYYY-MM (e.g. 2025-11).',
-                ], 400);
-            }
+        if ($perPage < 1) {
+            $perPage = 10;
         }
 
-        $payments = $query->get();
+        if ($perPage > 100) {
+            $perPage = 100;
+        }
 
-        $grouped = $payments->groupBy(function ($payment) {
-            return \Carbon\Carbon::parse($payment->created_at)->format('F Y'); 
-        })->map(function ($group, $key) {
-            return [
-                'month' => $key,
-                'count' => $group->count(),
-                'total_amount' => $group->sum('amount'),
-                'payments' => $group->map(function ($p) {
-                    $employer = $p->employer;
+        $search     = trim($request->query('search', ''));
+        $status     = $request->query('status');
+        $month      = $request->query('month');
+        $dateFrom   = $request->query('date_from');
+        $dateTo     = $request->query('date_to');
 
-                    return [
-                        'id' => $p->id,
-                        'amount' => $p->amount,
-                        'status' => $p->status,
-                        'reference' => 'reference',
-                        'created_at' => $p->created_at->format('Y-m-d H:i:s'),
-                        'employer_details' => $employer ? [
-                            'id' => $employer->id,
-                            'first_name' => $employer->first_name,
-                            'last_name' => $employer->last_name,
-                            'email' => $employer->email,
-                            'phone' => $employer->phone,
-                            'address' => $employer->address,
-                            'employment_type' => $employer->employment_type,
-                            'jobTitle' => $employer->job_title,
-                        ] : null,
-                    ];
-                })->values(),
-            ];
-        })->values();
+        $allowedStatuses = [
+            'pending',
+            'successful',
+            'failed',
+            'cancelled',
+        ];
 
-        if ($grouped->isEmpty()) {
+        if ($status && $status !== 'all' && !in_array($status, $allowedStatuses)) {
             return response()->json([
-                'success' => false,
-                'message' => 'No salary paid for that month',
-                'data' => [],
+                'status'  => false,
+                'message' => 'Invalid status.',
+                'allowed' => $allowedStatuses,
+            ], 422);
+        }
+
+        $monthDate = null;
+        if ($month) {
+            try {
+                $monthDate = \Carbon\Carbon::createFromFormat('Y-m',$month);
+
+                if ($monthDate->format('Y-m') !== $month) {
+                    throw new \Exception();
+                }
+
+            } catch (\Exception $e) {
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Invalid month format. Use YYYY-MM, e.g. 2026-09.'
+                ], 422);
+            }
+        }
+        if ($dateFrom) {
+            try {
+                $dateFromCarbon = \Carbon\Carbon::parse($dateFrom)
+                    ->startOfDay();
+
+            } catch (\Exception $e) {
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Invalid date_from. Use YYYY-MM-DD.'
+                ], 422);
+            }
+
+        } else {
+            $dateFromCarbon = null;
+        }
+
+        if ($dateTo) {
+            try {
+                $dateToCarbon = \Carbon\Carbon::parse($dateTo)
+                    ->endOfDay();
+
+            } catch (\Exception $e) {
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Invalid date_to. Use YYYY-MM-DD.'
+                ], 422);
+            }
+
+        } else {
+            $dateToCarbon = null;
+        }
+
+        if ($dateFromCarbon && $dateToCarbon &&  $dateFromCarbon->gt($dateToCarbon)
+        ) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'date_from cannot be greater than date_to.'
+            ], 422);
+        }
+
+        $query = \App\Models\Payment::query()
+            ->with([
+                'employee:id,company_id,first_name,last_name,email,phone,address,job_title,paying,employment_type,bank_name,account_name,account_number,estimate_pay,deduction_amount,bank_code'
+            ])
+            ->whereHas('employee', function ($employeeQuery) use ($company) {
+                $employeeQuery->where(
+                    'company_id',
+                    $company->id
+                );
+            });
+
+        if ($search !== '') {
+
+            $query->where(function ($q) use ($search) {
+                $q->where('reference', 'LIKE', '%' . $search . '%')
+                    ->orWhere('employee_name', 'LIKE', '%' . $search . '%')
+                    ->orWhere('amount', 'LIKE', '%' . $search . '%');
+
+                $q->orWhereHas('employee', function ($employeeQuery) use ($search) {
+                    $employeeQuery
+                        ->where('first_name', 'LIKE', '%' . $search . '%')
+                        ->orWhere('last_name', 'LIKE', '%' . $search . '%')
+                        ->orWhere('email', 'LIKE', '%' . $search . '%')
+                        ->orWhere('phone', 'LIKE', '%' . $search . '%')
+                        ->orWhere('account_number', 'LIKE', '%' . $search . '%')
+                        ->orWhere('account_name', 'LIKE', '%' . $search . '%')
+                        ->orWhere('bank_name', 'LIKE', '%' . $search . '%')
+                        ->orWhere('job_title', 'LIKE', '%' . $search . '%');
+                });
+            });
+        }
+
+        if ($status && $status !== 'all') {
+            $query->where('status', $status);
+        }
+
+        if ($monthDate) {
+            $query->whereYear(
+                'payment_date',
+                $monthDate->year
+            )->whereMonth(
+                'payment_date',
+                $monthDate->month
+            );
+        }
+
+        if ($dateFromCarbon) {
+            $query->where(
+                'payment_date',
+                '>=',
+                $dateFromCarbon->toDateString()
+            );
+        }
+
+        if ($dateToCarbon) {
+            $query->where(
+                'payment_date',
+                '<=',
+                $dateToCarbon->toDateString()
+            );
+        }
+
+        $payments = $query
+            ->orderBy('payment_date', 'desc')
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        if ($payments->isEmpty()) {
+
+            return response()->json([
+                'status'  => false,
+                'message' => 'No salary payment found.',
+                'data'    => [],
             ], 404);
         }
 
-        $paginated = $grouped->forPage($request->query('page', 1), $perPage);
+        $grouped = $payments
+            ->groupBy(function ($payment) {
+                return \Carbon\Carbon::parse(
+                    $payment->payment_date
+                )->format('Y-m');
+            })
+            ->sortKeysDesc()
+            ->map(function ($group, $monthKey) {
+
+                $monthDate = \Carbon\Carbon::createFromFormat(
+                    'Y-m',
+                    $monthKey
+                );
+
+                return [
+                    'month' => $monthDate->format('F Y'),
+                    'month_key' => $monthKey,
+                    'count' => $group->count(),
+                    'total_amount' => (float) $group->sum('amount'),
+                    'successful_amount' => (float) $group
+                        ->where('status', 'successful')
+                        ->sum('amount'),
+
+                    'pending_amount' => (float) $group
+                        ->where('status', 'pending')
+                        ->sum('amount'),
+
+                    'failed_amount' => (float) $group
+                        ->where('status', 'failed')
+                        ->sum('amount'),
+
+                    'payments' => $group
+                        ->map(function ($payment) {
+
+                            $employee = $payment->employee;
+                            return [
+                                'id' => $payment->id,
+                                'employee_id' => $payment->employee_id,
+                                'employee_name' => $payment->employee_name,
+                                'amount' => (float) $payment->amount,
+                                'payment_date' => $payment->payment_date
+                                    ? \Carbon\Carbon::parse(
+                                        $payment->payment_date
+                                    )->format('Y-m-d')
+                                    : null,
+
+                                'reference' => $payment->reference,
+                                'status' => $payment->status,
+                                'created_at' => $payment->created_at
+                                    ? $payment->created_at->format(
+                                        'Y-m-d H:i:s'
+                                    )
+                                    : null,
+
+                                'updated_at' => $payment->updated_at
+                                    ? $payment->updated_at->format(
+                                        'Y-m-d H:i:s'
+                                    )
+                                    : null,
+
+                                'employee' => $employee ? [
+                                    'id' => $employee->id,
+                                    'company_id' => $employee->company_id,
+                                    'first_name' => $employee->first_name,
+                                    'last_name' => $employee->last_name,
+                                    'full_name' => trim(
+                                        $employee->first_name . ' ' .
+                                        $employee->last_name
+                                    ),
+                                    'email' => $employee->email,
+                                    'phone' => $employee->phone,
+                                    'address' => $employee->address,
+                                    'job_title' => $employee->job_title,
+                                    'paying' => $employee->paying,
+                                    'employment_type' =>
+                                        $employee->employment_type,
+                                    'bank_name' => $employee->bank_name,
+                                    'account_name' =>
+                                        $employee->account_name,
+                                    'account_number' =>
+                                        $employee->account_number,
+                                    'estimate_pay' =>
+                                        (float) $employee->estimate_pay,
+                                    'deduction_amount' =>
+                                        (float) $employee->deduction_amount,
+                                    'bank_code' => $employee->bank_code,
+                                ] : null,
+                            ];
+                        })
+                        ->values(),
+                ];
+            })
+            ->values();
+
+        $currentPage = max(
+            1,
+            (int) $request->query('page', 1)
+        );
+
+        $totalGroups = $grouped->count();
+        $lastPage = (int) ceil(
+            $totalGroups / $perPage
+        );
+        if ($currentPage > $lastPage && $lastPage > 0) {
+            $currentPage = $lastPage;
+        }
+        $paginatedGroups = $grouped
+            ->slice(
+                ($currentPage - 1) * $perPage,
+                $perPage
+            )
+            ->values();
 
         return response()->json([
-            'success' => true,
-            'message' => 'Payments grouped successfully',
-            'data' => $paginated->values(),
+            'status'  => true,
+            'message' => 'Company payments fetched successfully.',
+            'company' => [
+                'id' => $company->id,
+                'name' => $company->name,
+            ],
+
+            'filters' => [
+                'search'    => $search ?: null,
+                'status'    => $status ?: 'all',
+                'month'     => $month ?: null,
+                'date_from' => $dateFrom ?: null,
+                'date_to'   => $dateTo ?: null,
+            ],
+
+            'data' => $paginatedGroups,
+
             'pagination' => [
-                'current_page' => (int) $request->query('page', 1),
-                'per_page' => $perPage,
-                'total_groups' => $grouped->count(),
-                'last_page' => ceil($grouped->count() / $perPage),
-            ]
-        ]);
+                'current_page' => $currentPage,
+                'per_page'     => $perPage,
+                'total_groups' => $totalGroups,
+                'last_page'    => $lastPage,
+                'has_more'     => $currentPage < $lastPage,
+            ],
+        ], 200);
     }
 }
+ 

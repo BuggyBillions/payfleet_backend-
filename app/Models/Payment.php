@@ -18,7 +18,7 @@ class Payment extends Model
         'status'
     ];
 
-    public function employees()
+    public function employee()
     {
         return $this->belongsTo(Employee::class);
     }

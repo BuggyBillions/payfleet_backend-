@@ -574,4 +574,32 @@ class AuthController extends Controller
             ]);
 
     }
+
+    public function adminStats(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$this->canManageUsers($user)) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Unauthorized'
+            ], 401);
+        }
+
+        $totalCompanies = Company::count();
+        $totalEmployees = Employees::count();
+        $activeAccounts = User::count();
+        $platformVolume = Transaction::where('transaction_type', 'deposit')
+            ->sum('amount');
+
+        $tiers =Tier::latest()->get();
+
+        return response()->json([
+            'message' => 'Dashboard stats',
+            'total_companies' => $totalCompanies,
+            'total_employees' => $totalEmployees,
+            'active_account' => $activeAccounts,
+            'tiers' => $tiers,
+        ]);
+    }
 }
