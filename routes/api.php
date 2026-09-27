@@ -71,6 +71,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('single-paying/{id}', [EmployeeController::class, 'togglePaying']);
     Route::put('multiple-paying', [EmployeeController::class, 'updateMultiplePaying']);
     Route::post('update-company-details', [AdminActionsController::class, 'UpdateCompanyProfile']);
+    Route::post('update-company-password', [AdminActionsController::class, 'updateCompanyPassword']);
+    Route::post('update-company-pin', [AdminActionsController::class, 'updateCompanyPin']);
     Route::get('company-deposit', [CompanyFundController::class, 'getCompanyDeposit']);
     Route::get('each-company-deposit/{id}', [CompanyFundController::class, 'getCompanyDepositDetails']);
     Route::get('company-activity-logs', [CompanyProfileController::class, 'activityLogs']);

@@ -678,6 +678,138 @@ class AdminActionsController extends Controller
         }
     }
 
+    public function updateCompanyPassword(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthorized.'
+            ], 401);
+        }
+
+        $company = Company::where('user_id', $user->id)->first();
+
+        if (!$company) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Company account not found.'
+            ], 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'current_password'          => 'required|string',
+            'new_password'              => 'required|string|min:8',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => false,
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        if (!Hash::check($request->current_password, $user->password)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Current password is incorrect.'
+            ], 422);
+        }
+
+        if (Hash::check($request->new_password, $user->password)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'New password must be different from your current password.'
+            ], 422);
+        }
+
+        try {
+
+            $user->password = Hash::make($request->new_password);
+            $user->save();
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Password updated successfully.'
+            ], 200);
+
+        } catch (\Exception $e) {
+
+            return response()->json([
+                'status' => false,
+                'message' => 'Password update failed.',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function updateCompanyPin(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthorized.'
+            ], 401);
+        }
+
+        $company = Company::where('user_id', $user->id)->first();
+
+        if (!$company) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Company account not found.'
+            ], 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'current_pin'      => 'required|string|size:4',
+            'new_pin'          => 'required|string|size:4',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => false,
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        if (empty($company->pin) || !Hash::check($request->current_pin, $company->pin)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Current PIN is incorrect.'
+            ], 422);
+        }
+
+        if (Hash::check($request->new_pin, $company->pin)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'New PIN must be different from your current PIN.'
+            ], 422);
+        }
+
+        try {
+
+            $company->pin = Hash::make($request->new_pin);
+            $company->save();
+
+            return response()->json([
+                'status' => true,
+                'message' => 'PIN updated successfully.'
+            ], 200);
+
+        } catch (\Exception $e) {
+
+            return response()->json([
+                'status' => false,
+                'message' => 'PIN update failed.',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
     public function createAccount(Request $request)
     {
         $admin = $request->user();
