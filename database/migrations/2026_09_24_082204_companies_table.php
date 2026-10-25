@@ -15,10 +15,10 @@ return new class extends Migration
             $table->id();
             $table->string('name');
             $table->string('logo')->nullable();
-            $table->text('about');
+            $table->text('about')->nullable();
             $table->string('phone');
             $table->string('email')->unique();
-            $table->string('address');
+            $table->string('address')->nullable();
             $table->foreignId('user_id')
                 ->unique()
                 ->constrained()
