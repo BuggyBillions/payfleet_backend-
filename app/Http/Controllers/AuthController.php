@@ -28,8 +28,8 @@ class AuthController extends Controller
             'name'     => 'required|string|max:255|unique:companies,name',
             'email'    => 'required|email|unique:companies,email',
             'phone'    => 'required|string',
-            'about'    => 'required|string',
-            'address'  => 'required|string',
+            'about'    => 'nullable|string',
+            'address'  => 'nullable|string',
             'password' => 'required|string|min:8',
             'logo'     => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
         ]);
