@@ -1024,444 +1024,216 @@ class AdminActionsController extends Controller
     {
         $rawBody = $request->getContent();
 
-        /*
-        |--------------------------------------------------------------------------
-        | 1. Verify Moniepoint webhook authentication
-        |--------------------------------------------------------------------------
-        */
-
+        // ---------- 1. Verify signature ----------
         $webhookId = $request->header('moniepoint-webhook-id');
         $timestamp = $request->header('moniepoint-webhook-timestamp');
         $signature = $request->header('moniepoint-webhook-signature');
-
-        $secret = config('services.moniepoint.webhook_secret');
+        $secret    = config('services.moniepoint.webhook_secret');
 
         if (!$secret || !$webhookId || !$timestamp || !$signature) {
             Log::warning('Moniepoint webhook: authentication headers missing.');
-
-            return response()->json([
-                'status' => false,
-                'message' => 'Missing webhook authentication headers.',
-            ], 401);
+            return response()->json(['status' => false, 'message' => 'Missing webhook authentication headers.'], 401);
         }
 
         if (!ctype_digit((string) $timestamp)) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Invalid webhook timestamp.',
-            ], 401);
+            return response()->json(['status' => false, 'message' => 'Invalid webhook timestamp.'], 401);
         }
 
-        $timestampMs = (int) $timestamp;
         $nowMs = (int) floor(microtime(true) * 1000);
-
-        if (abs($nowMs - $timestampMs) > 300000) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Webhook timestamp expired.',
-            ], 401);
+        if (abs($nowMs - (int) $timestamp) > 300000) {
+            return response()->json(['status' => false, 'message' => 'Webhook timestamp expired.'], 401);
         }
-
-        $signedData = $webhookId . '__' . $timestamp . '__' . $rawBody;
 
         $expectedSignature = base64_encode(
-            hash_hmac('sha256', $signedData, $secret, true)
+            hash_hmac('sha256', $webhookId . '__' . $timestamp . '__' . $rawBody, $secret, true)
         );
 
         if (!hash_equals($expectedSignature, $signature)) {
-            Log::warning('Moniepoint webhook: invalid signature.', [
-                'webhook_id' => $webhookId,
-            ]);
-
-            return response()->json([
-                'status' => false,
-                'message' => 'Invalid webhook signature.',
-            ], 401);
+            Log::warning('Moniepoint webhook: invalid signature.', ['webhook_id' => $webhookId]);
+            return response()->json(['status' => false, 'message' => 'Invalid webhook signature.'], 401);
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | 2. Decode the authenticated event
-        |--------------------------------------------------------------------------
-        */
-
+        // ---------- 2. Decode ----------
         $payload = json_decode($rawBody, true);
 
         if (!is_array($payload)) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Invalid JSON payload.',
-            ], 400);
+            return response()->json(['status' => false, 'message' => 'Invalid JSON payload.'], 400);
         }
 
-        $eventId = $payload['eventId'] ?? null;
+        $eventId   = $payload['eventId'] ?? null;
         $eventType = $payload['eventType'] ?? null;
-        $data = $payload['data'] ?? [];
+        $data      = $payload['data'] ?? [];
 
-        Log::info('Moniepoint authenticated webhook received.', [
-            'event_id' => $eventId,
-            'event_type' => $eventType,
-            'transaction_reference' =>
-                $data['transactionReference'] ?? null,
-            'merchant_reference' =>
-                $data['merchantReference'] ?? null,
-            'amount_kobo' => $data['amount'] ?? null,
-            'transaction_status' =>
-                $data['transactionStatus'] ?? null,
+        Log::info('Moniepoint webhook received.', [
+            'event_id'              => $eventId,
+            'event_type'            => $eventType,
+            'transaction_reference' => $data['transactionReference'] ?? null,
+            'merchant_reference'    => $data['merchantReference'] ?? null,
+            'amount'                => $data['amount'] ?? null,
+            'transaction_status'    => $data['transactionStatus'] ?? null,
         ]);
 
-        if (!in_array($eventType, [
-            'V1_POS_TRANSFER_TRANSACTION',
-            'V1_TRANSFER_TRANSACTION',
-        ], true)) {
-            return response()->json([
-                'status' => true,
-                'message' => 'Event ignored.',
-            ], 200);
+        if (!in_array($eventType, ['V1_POS_TRANSFER_TRANSACTION', 'V1_TRANSFER_TRANSACTION'], true)) {
+            return response()->json(['status' => true, 'message' => 'Event ignored.'], 200);
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | 3. Verify payment status
-        |--------------------------------------------------------------------------
-        */
-
-        $paymentStatus = strtoupper(
-            (string) ($data['transactionStatus'] ?? '')
-        );
-
-        $responseCode = (string) ($data['responseCode'] ?? '');
+        // ---------- 3. Payment status ----------
+        $paymentStatus = strtoupper((string) ($data['transactionStatus'] ?? ''));
+        $responseCode  = (string) ($data['responseCode'] ?? '');
 
         if (
-            !in_array($paymentStatus, [
-                'COMPLETED',
-                'APPROVED',
-                'SUCCESSFUL',
-            ], true) ||
+            !in_array($paymentStatus, ['COMPLETED', 'APPROVED', 'SUCCESSFUL'], true) ||
             !in_array($responseCode, ['20000', '00'], true)
         ) {
             Log::warning('Moniepoint payment was not successful.', [
-                'event_id' => $eventId,
-                'status' => $paymentStatus,
-                'response_code' => $responseCode,
+                'event_id' => $eventId, 'status' => $paymentStatus, 'response_code' => $responseCode,
             ]);
-
-            return response()->json([
-                'status' => true,
-                'message' => 'Payment is not successful.',
-            ], 200);
+            return response()->json(['status' => true, 'message' => 'Payment is not successful.'], 200);
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | 4. Validate the payment amount and external reference
-        |--------------------------------------------------------------------------
-        */
-
+        // ---------- 4. Validate amount and references ----------
         $amountKobo = $data['amount'] ?? null;
 
-        if (
-            !is_numeric($amountKobo) ||
-            (float) $amountKobo <= 0 ||
-            (float) $amountKobo != (int) $amountKobo
-        ) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Invalid payment amount.',
-            ], 422);
+        if (!is_numeric($amountKobo) || (float) $amountKobo <= 0 || (float) $amountKobo != (int) $amountKobo) {
+            return response()->json(['status' => false, 'message' => 'Invalid payment amount.'], 422);
         }
 
-        $amountKobo = (int) $amountKobo;
-
-        $moniepointReference =
-            $data['transactionReference'] ?? null;
-
-        $merchantReference =
-            $data['merchantReference'] ?? null;
+        $amountKobo          = (int) $amountKobo;
+        $moniepointReference = $data['transactionReference'] ?? null;
+        $merchantReference   = $data['merchantReference'] ?? null;
 
         if (!$moniepointReference) {
-            Log::warning('Moniepoint event has no transaction reference.', [
-                'event_id' => $eventId,
-            ]);
-
-            return response()->json([
-                'status' => false,
-                'message' => 'Missing Moniepoint transaction reference.',
-            ], 422);
+            return response()->json(['status' => false, 'message' => 'Missing Moniepoint transaction reference.'], 422);
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | 5. Match and credit the deposit atomically
-        |--------------------------------------------------------------------------
-        */
+        if (!$merchantReference) {
+            // Payments with no merchantReference were not initiated by us. Never guess a match by amount.
+            Log::warning('Moniepoint payment without merchantReference: manual reconciliation required.', [
+                'event_id' => $eventId, 'moniepoint_reference' => $moniepointReference, 'amount_kobo' => $amountKobo,
+            ]);
+            return response()->json(['status' => true, 'message' => 'No merchant reference; not credited.'], 200);
+        }
 
+        // ---------- 5. Credit atomically ----------
         try {
-            $result = DB::transaction(function () use (
-                $amountKobo,
-                $moniepointReference,
-                $merchantReference,
-                $eventId
-            ) {
-                /*
-                * A transaction reference may only be credited once.
-                */
-                $alreadyProcessed = Transaction::where(
-                    'moniepoint_reference',
-                    $moniepointReference
-                )->lockForUpdate()->first();
+            $result = DB::transaction(function () use ($amountKobo, $moniepointReference, $merchantReference, $eventId) {
 
-                if ($alreadyProcessed) {
-                    return [
-                        'http' => 200,
-                        'status' => true,
-                        'message' => 'Moniepoint transaction already processed.',
-                    ];
+                // Lock the deposit row first so concurrent deliveries serialize here
+                $transaction = Transaction::where('reference', $merchantReference)
+                    ->where('transaction_type', 'deposit')
+                    ->where('type', 'CREDIT')
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$transaction) {
+                    Log::warning('Payfleet deposit reference not found.', [
+                        'event_id' => $eventId, 'merchant_reference' => $merchantReference,
+                    ]);
+                    return ['http' => 200, 'status' => false, 'message' => 'Deposit reference not found; no wallet credited.'];
                 }
 
-                /*
-                * If Moniepoint supplied a Payfleet reference, use it.
-                * Otherwise, find pending deposits whose expected payment
-                * exactly matches the received amount.
-                */
-                if ($merchantReference) {
-                    $transaction = Transaction::where(
-                        'reference',
-                        $merchantReference
-                    )
-                        ->where('transaction_type', 'deposit')
-                        ->where('type', 'CREDIT')
-                        ->lockForUpdate()
-                        ->first();
-
-                    if (!$transaction) {
-                        Log::warning(
-                            'Payfleet deposit reference not found.',
-                            [
-                                'event_id' => $eventId,
-                                'merchant_reference' => $merchantReference,
-                            ]
-                        );
-
-                        return [
-                            'http' => 200,
-                            'status' => false,
-                            'message' => 'Deposit reference not found; no wallet credited.',
-                        ];
-                    }
-                } else {
-                    /*
-                    * The configured fee is the extra amount the company
-                    * is expected to pay Payfleet, not Moniepoint's fee.
-                    *
-                    * Example:
-                    * Deposit amount = ₦100
-                    * Payfleet deposit fee = ₦100
-                    * Expected incoming payment = ₦200
-                    */
-                    $depositFee = (float) config(
-                        'services.moniepoint.deposit_fee',
-                        100
-                    );
-
-                    $pendingTransactions = Transaction::where(
-                        'transaction_type',
-                        'deposit'
-                    )
-                        ->where('type', 'CREDIT')
-                        ->where('status', 'pending')
-                        ->orderBy('id')
-                        ->lockForUpdate()
-                        ->get();
-
-                    $matches = $pendingTransactions->filter(
-                        function ($item) use ($amountKobo, $depositFee) {
-                            $expectedKobo = (int) round(
-                                (
-                                    (float) $item->amount
-                                    + $depositFee
-                                ) * 100
-                            );
-
-                            return $expectedKobo === $amountKobo;
-                        }
-                    );
-
-                    if ($matches->count() !== 1) {
-                        Log::warning(
-                            'Moniepoint deposit could not be matched uniquely.',
-                            [
-                                'event_id' => $eventId,
-                                'moniepoint_reference' =>
-                                    $moniepointReference,
-                                'amount_kobo' => $amountKobo,
-                                'matching_deposits' => $matches->count(),
-                            ]
-                        );
-
-                        return [
-                            'http' => 200,
-                            'status' => false,
-                            'message' =>
-                                'Payment received but could not be matched uniquely. No wallet credited.',
-                        ];
-                    }
-
-                    $transaction = $matches->first();
+                // Already credited, so treat the retry as success
+                if ($transaction->status === 'successful' || $transaction->moniepoint_reference === $moniepointReference) {
+                    return ['http' => 200, 'status' => true, 'message' => 'Moniepoint transaction already processed.'];
                 }
 
-                /*
-                * Only pending Payfleet deposits can be credited.
-                */
-                if (
-                    $transaction->status !== 'pending' ||
-                    $transaction->transaction_type !== 'deposit' ||
-                    strtoupper((string) $transaction->type) !== 'CREDIT'
-                ) {
-                    return [
-                        'http' => 200,
-                        'status' => false,
-                        'message' => 'Transaction is not an eligible pending deposit.',
-                    ];
+                // Same Moniepoint payment used on another record
+                if (Transaction::where('moniepoint_reference', $moniepointReference)->exists()) {
+                    return ['http' => 200, 'status' => true, 'message' => 'Moniepoint transaction already processed.'];
                 }
 
-                /*
-                * Check the amount even when merchantReference is present.
-                */
-                $depositAmountKobo = (int) round(
-                    (float) $transaction->amount * 100
-                );
+                if ($transaction->status !== 'pending') {
+                    Log::warning('Payment received for non-pending deposit: reconcile manually.', [
+                        'reference' => $transaction->reference, 'status' => $transaction->status,
+                        'moniepoint_reference' => $moniepointReference,
+                    ]);
+                    return ['http' => 200, 'status' => false, 'message' => 'Transaction is not an eligible pending deposit.'];
+                }
 
-                $feeKobo = (int) round(
-                    (float) config(
-                        'services.moniepoint.deposit_fee',
-                        100
-                    ) * 100
-                );
-
-                $expectedKobo = $depositAmountKobo + $feeKobo;
+                // Exact amount check (deposit + fee)
+                $depositKobo  = (int) round((float) $transaction->amount * 100);
+                $feeKobo      = (int) round((float) config('services.moniepoint.deposit_fee', 100) * 100);
+                $expectedKobo = $depositKobo + $feeKobo;
 
                 if ($amountKobo !== $expectedKobo) {
-                    Log::warning('Moniepoint deposit amount mismatch.', [
-                        'event_id' => $eventId,
-                        'payfleet_reference' => $transaction->reference,
-                        'expected_kobo' => $expectedKobo,
-                        'received_kobo' => $amountKobo,
+                    Log::warning('Moniepoint deposit amount mismatch: reconcile manually.', [
+                        'event_id' => $eventId, 'payfleet_reference' => $transaction->reference,
+                        'expected_kobo' => $expectedKobo, 'received_kobo' => $amountKobo,
+                        'moniepoint_reference' => $moniepointReference,
                     ]);
-
-                    return [
-                        'http' => 200,
-                        'status' => false,
-                        'message' => 'Payment amount mismatch. No wallet credited.',
-                    ];
+                    return ['http' => 200, 'status' => false, 'message' => 'Payment amount mismatch. No wallet credited.'];
                 }
 
-                /*
-                * Lock the company before changing its balance.
-                */
-                $company = Company::where(
-                    'id',
-                    $transaction->company_id
-                )->lockForUpdate()->first();
+                $company = Company::where('id', $transaction->company_id)->lockForUpdate()->first();
 
                 if (!$company) {
-                    return [
-                        'http' => 200,
-                        'status' => false,
-                        'message' => 'Company not found. No wallet credited.',
-                    ];
+                    return ['http' => 200, 'status' => false, 'message' => 'Company not found. No wallet credited.'];
                 }
 
-                /*
-                * Credit only the intended deposit amount.
-                * Moniepoint's own transaction fee is separate.
-                */
-                $previousBalance = (float) ($company->balance ?? 0);
-                $creditAmount = $depositAmountKobo / 100;
+                // Integer kobo math, credit only the deposit amount (the fee is not credited)
+                $previousKobo = (int) round((float) ($company->balance ?? 0) * 100);
+                $newKobo      = $previousKobo + $depositKobo;
 
-                $newBalance = round(
-                    $previousBalance + $creditAmount,
-                    2
-                );
+                $previousBalance = $previousKobo / 100;
+                $creditAmount    = $depositKobo / 100;
+                $newBalance      = $newKobo / 100;
 
                 $company->balance = $newBalance;
                 $company->save();
 
-                /*
-                * Mark the deposit as successful and store the real
-                * Moniepoint transaction reference for duplicate protection.
-                */
-                $transaction->moniepoint_reference =
-                    $moniepointReference;
-                $transaction->status = 'successful';
-                $transaction->previous_balance = $previousBalance;
-                $transaction->current_balance = $newBalance;
+                $transaction->moniepoint_reference = $moniepointReference;
+                $transaction->status               = 'successful';
+                $transaction->previous_balance     = $previousBalance;
+                $transaction->current_balance      = $newBalance;
                 $transaction->save();
 
                 ActivityLog::create([
                     'user_id' => $company->user_id,
-                    'action' => 'Deposit Confirmed',
-                    'details' =>
-                        'Moniepoint deposit of ₦' .
-                        number_format($creditAmount, 2) .
-                        ' confirmed. Payfleet reference: ' .
-                        $transaction->reference .
-                        '. Moniepoint reference: ' .
-                        $moniepointReference .
-                        '. New balance: ₦' .
-                        number_format($newBalance, 2),
-                    'type' => 'transaction',
+                    'action'  => 'Deposit Confirmed',
+                    'details' => 'Moniepoint deposit of ₦' . number_format($creditAmount, 2)
+                        . ' confirmed. Payfleet reference: ' . $transaction->reference
+                        . '. Moniepoint reference: ' . $moniepointReference
+                        . '. New balance: ₦' . number_format($newBalance, 2),
+                    'type'    => 'transaction',
                 ]);
 
                 Notification::create([
                     'user_id' => $company->user_id,
-                    'title' => 'Deposit Successful',
-                    'message' =>
-                        'Your deposit of ₦' .
-                        number_format($creditAmount, 2) .
-                        ' has been confirmed. Your new balance is ₦' .
-                        number_format($newBalance, 2) . '.',
-                    'type' => 'transaction',
+                    'title'   => 'Deposit Successful',
+                    'message' => 'Your deposit of ₦' . number_format($creditAmount, 2)
+                        . ' has been confirmed. Your new balance is ₦' . number_format($newBalance, 2) . '.',
+                    'type'    => 'transaction',
                     'is_read' => false,
                 ]);
 
                 return [
-                    'http' => 200,
-                    'status' => true,
-                    'message' => 'Deposit confirmed and wallet credited.',
-                    'reference' => $transaction->reference,
+                    'http'                 => 200,
+                    'status'               => true,
+                    'message'              => 'Deposit confirmed and wallet credited.',
+                    'reference'            => $transaction->reference,
                     'moniepoint_reference' => $moniepointReference,
-                    'amount_credited' => $creditAmount,
-                    'previous_balance' => $previousBalance,
-                    'current_balance' => $newBalance,
+                    'amount_credited'      => $creditAmount,
+                    'previous_balance'     => $previousBalance,
+                    'current_balance'      => $newBalance,
                 ];
             }, 3);
 
             return response()->json([
-                'status' => $result['status'],
+                'status'  => $result['status'],
                 'message' => $result['message'],
-                'data' => array_intersect_key(
-                    $result,
-                    array_flip([
-                        'reference',
-                        'moniepoint_reference',
-                        'amount_credited',
-                        'previous_balance',
-                        'current_balance',
-                    ])
-                ),
+                'data'    => array_intersect_key($result, array_flip([
+                    'reference', 'moniepoint_reference', 'amount_credited', 'previous_balance', 'current_balance',
+                ])),
             ], $result['http']);
 
         } catch (\Throwable $e) {
             Log::error('Moniepoint deposit processing failed.', [
                 'moniepoint_reference' => $moniepointReference,
-                'error' => $e->getMessage(),
+                'error'                => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'status' => false,
-                'message' => 'Failed to process Moniepoint deposit.',
-            ], 500);
+            // 500 so Moniepoint retries the webhook
+            return response()->json(['status' => false, 'message' => 'Failed to process Moniepoint deposit.'], 500);
         }
     }
     
