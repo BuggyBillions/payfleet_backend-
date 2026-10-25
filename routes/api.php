@@ -101,6 +101,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('all-banks', [CompanyFundController::class, 'listFlutterwaveBanks']);
     Route::post('resolve-account', [CompanyFundController::class, 'resolveFlutterwaveBankAccount']);
 }); 
+Route::post('/webhooks/moniepoint', [AdminActionsController::class,'handle']);
 
 // finance
 Route::middleware('auth:sanctum')->group(function () {

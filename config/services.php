@@ -53,4 +53,9 @@ return [
         'base_url'      =>  env('FLW_BASE_URL'),
         'currency'      =>  env('FLW_CURRENCY'),
     ],
+
+    'moniepoint' => [
+        'webhook_secret' => env('MONIEPOINT_WEBHOOK_SECRET'),
+        'deposit_fee'    => env('MONIEPOINT_DEPOSIT_FEE', 100),
+    ],
 ];

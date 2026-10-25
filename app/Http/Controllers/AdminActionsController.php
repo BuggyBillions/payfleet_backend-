@@ -16,6 +16,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 
 class AdminActionsController extends Controller
 {   
@@ -1018,7 +1019,293 @@ class AdminActionsController extends Controller
             ], 500);
         }
     }
+ 
+    public function handle(Request $request)
+    {
+        $webhookId = $request->header('moniepoint-webhook-id');
+        $timestamp = $request->header('moniepoint-webhook-timestamp');
+        $signature = $request->header('moniepoint-webhook-signature');
 
+        $secret = config('services.moniepoint.webhook_secret');
+
+        if (!$secret || !$webhookId || !$timestamp || !$signature) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Missing webhook authentication details.'
+            ], 401);
+        }
+
+        // Verify the original, unmodified request body.
+        $rawBody = $request->getContent();
+
+        $signedData = $webhookId . '__' . $timestamp . '__' . $rawBody;
+
+        $expectedSignature = base64_encode(
+            hash_hmac('sha256', $signedData, $secret, true)
+        );
+
+        if (!hash_equals($expectedSignature, $signature)) {
+            Log::warning('Invalid Moniepoint webhook signature.');
+
+            return response()->json([
+                'status'  => false,
+                'message' => 'Invalid webhook signature.'
+            ], 401);
+        }
+
+        // Reject old webhook requests to reduce replay risk.
+        if (
+            !ctype_digit((string) $timestamp) ||
+            abs((int) floor(microtime(true) * 1000) - (int) $timestamp) > 300000
+        ) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Webhook timestamp expired.'
+            ], 401);
+        }
+
+        $payload = json_decode($rawBody, true);
+
+        if (!is_array($payload)) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Invalid webhook payload.'
+            ], 400);
+        }
+
+        $eventType = $payload['eventType'] ?? null;
+        $data      = $payload['data'] ?? [];
+
+        // Only handle supported transfer events.
+        if (!in_array($eventType, [
+            'V1_POS_TRANSFER_TRANSACTION',
+            'V1_TRANSFER_TRANSACTION',
+        ], true)) {
+            // CHANGED: log what Moniepoint actually sends, so if the event
+            // name is wrong you will SEE it in the logs instead of silence
+            Log::info('Moniepoint webhook event ignored.', [
+                'eventType' => $eventType,
+                'eventId'   => $payload['eventId'] ?? null,
+            ]);
+
+            return response()->json([
+                'status'  => true,
+                'message' => 'Event ignored.'
+            ], 200);
+        }
+
+        $status       = strtoupper((string) ($data['transactionStatus'] ?? ''));
+        $responseCode = (string) ($data['responseCode'] ?? '');
+
+        if (
+            !in_array($status, ['COMPLETED', 'APPROVED', 'SUCCESSFUL'], true) ||
+            !in_array($responseCode, ['00', '20000'], true)
+        ) {
+            // CHANGED: log the real values Moniepoint sent, so you can verify
+            // your checks match reality before going live
+            Log::warning('Moniepoint webhook: transaction not confirmed.', [
+                'eventId'      => $payload['eventId'] ?? null,
+                'status'       => $status,
+                'responseCode' => $responseCode,
+                'raw'          => $data,
+            ]);
+
+            return response()->json([
+                'status'  => true,
+                'message' => 'Transaction is not confirmed successful.'
+            ], 200);
+        }
+
+        /*
+        * ⚠️ STILL YOUR JOB: this reference must be sent to Moniepoint when the
+        * transfer is initiated (your Deposit() now returns it). If Moniepoint
+        * never receives it, this webhook can never match the payment.
+        */
+        $reference = $data['merchantReference']
+            ?? ($data['customFields']['reference'] ?? null);
+
+        if (!$reference) {
+            Log::warning('Moniepoint webhook has no Payfleet reference.', [
+                'event_id'              => $payload['eventId'] ?? null,
+                'transaction_reference' => $data['transactionReference'] ?? null,
+            ]);
+
+            return response()->json([
+                'status'  => false,
+                'message' => 'No matching Payfleet reference was supplied.'
+            ], 422);
+        }
+
+        if (
+            !isset($data['amount']) ||
+            !is_numeric($data['amount']) ||
+            (float) $data['amount'] <= 0
+        ) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Invalid transaction amount.'
+            ], 422);
+        }
+
+        $paidAmountKobo = (int) $data['amount'];
+
+        if ((float) $data['amount'] != $paidAmountKobo) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Invalid transaction amount format.'
+            ], 422);
+        }
+
+        $paidAmount = $paidAmountKobo / 100;
+
+        try {
+            $result = DB::transaction(function () use (
+                $reference,
+                $paidAmount,
+                $payload
+            ) {
+                $transaction = Transaction::where('reference', $reference)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$transaction) {
+                    return [
+                        'http'    => 404,
+                        'status'  => false,
+                        'message' => 'Payfleet transaction not found.'
+                    ];
+                }
+
+                if ($transaction->status === 'successful') {
+                    return [
+                        'http'    => 200,
+                        'status'  => true,
+                        'message' => 'Transaction already processed.'
+                    ];
+                }
+
+                if (
+                    $transaction->status !== 'pending' ||
+                    $transaction->transaction_type !== 'deposit' ||
+                    strtoupper($transaction->type) !== 'CREDIT'
+                ) {
+                    return [
+                        'http'    => 422,
+                        'status'  => false,
+                        'message' => 'Transaction is not an eligible deposit.'
+                    ];
+                }
+
+                $company = Company::where('id', $transaction->company_id)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$company) {
+                    return [
+                        'http'    => 404,
+                        'status'  => false,
+                        'message' => 'Company not found.'
+                    ];
+                }
+
+                // CHANGED: fee from config — same value as Deposit() uses
+                $depositFee = (float) config('services.moniepoint.deposit_fee', 100);
+
+                $expectedPayment = round(
+                    (float) $transaction->amount + $depositFee,
+                    2
+                );
+
+                if (round($paidAmount, 2) !== $expectedPayment) {
+                    Log::warning('Moniepoint deposit amount mismatch.', [
+                        'reference'        => $reference,
+                        'expected_payment' => $expectedPayment,
+                        'received_payment' => $paidAmount,
+                    ]);
+
+                    return [
+                        'http'    => 422,
+                        'status'  => false,
+                        'message' => 'Payment amount does not match.'
+                    ];
+                }
+
+                $previousBalance = (float) ($company->balance ?? 0);
+
+                // Credit only the requested deposit amount, not the fee.
+                $creditAmount = (float) $transaction->amount;
+
+                $newBalance = round($previousBalance + $creditAmount, 2);
+
+                $company->balance = $newBalance;
+                $company->save();
+
+                $transaction->update([
+                    'status'           => 'successful',
+                    'previous_balance' => $previousBalance,
+                    'current_balance'  => $newBalance,
+                ]);
+
+                $userId = $company->user_id;
+
+                ActivityLog::create([
+                    'user_id' => $userId,
+                    'action'  => 'Deposit Confirmed',
+                    'details' =>
+                        "Moniepoint deposit of ₦{$creditAmount} confirmed. " .
+                        "Reference: {$transaction->reference}. " .
+                        "New balance: ₦{$newBalance}",
+                    'type'    => 'transaction',
+                ]);
+
+                Notification::create([
+                    'user_id' => $userId,
+                    'title'   => 'Deposit Successful',
+                    'message' =>
+                        "Your deposit of ₦{$creditAmount} was confirmed. " .
+                        "Your new balance is ₦{$newBalance}.",
+                    'type'    => 'transaction',
+                    'is_read' => false,
+                ]);
+
+                return [
+                    'http'              => 200,
+                    'status'            => true,
+                    'message'           => 'Deposit credited successfully.',
+                    'reference'         => $transaction->reference,
+                    'amount_credited'   => $creditAmount,
+                    'previous_balance'  => $previousBalance,
+                    'current_balance'   => $newBalance,
+                ];
+            }, 3);
+
+            return response()->json([
+                'status'  => $result['status'],
+                'message' => $result['message'],
+                'data'    => array_intersect_key(
+                    $result,
+                    array_flip([
+                        'reference',
+                        'amount_credited',
+                        'previous_balance',
+                        'current_balance',
+                    ])
+                ),
+            ], $result['http']);
+
+        } catch (\Throwable $e) {
+            Log::error('Moniepoint deposit webhook failed.', [
+                'reference' => $reference,
+                'error'     => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'status'  => false,
+                'message' => 'Unable to process deposit notification.'
+            ], 500);
+        }
+    }
+    
     public function declineDeposit(Request $request, $id)
     {
         $admin = $request->user();
