@@ -6,6 +6,7 @@ use App\Http\Controllers\ChatController;
 use App\Http\Controllers\CompanyFundController;
 use App\Http\Controllers\CompanyProfileController;
 use App\Http\Controllers\EmployeeController;
+use App\Http\Controllers\LeadController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\TierController;
 use App\Models\Employee;
@@ -139,4 +140,15 @@ Route::middleware('auth:sanctum')->group(function () {
 // payment
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('pay-employee', [PaymentController::class, 'trigerPayroll']);
+});
+
+// lead
+Route::middleware('auth:sanctum')->prefix('leads')->group(function () {
+    Route::post('/', [LeadController::class, 'store']);
+    Route::get('/', [LeadController::class, 'index']);
+    Route::get('/due', [LeadController::class, 'due']);
+    Route::get('/{id}', [LeadController::class, 'show'])->whereNumber('id');
+    Route::put('/{id}', [LeadController::class, 'update'])->whereNumber('id');
+    Route::post('/{id}/follow-ups', [LeadController::class, 'addFollowUp'])->whereNumber('id');
+    Route::delete('/{id}', [LeadController::class, 'destroy'])->whereNumber('id');
 });
