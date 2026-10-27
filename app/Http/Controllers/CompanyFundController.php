@@ -20,6 +20,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password as PasswordRule;
 use Illuminate\Validation\ValidationException;
 use App\Services\MoniepointService;
+use App\Services\DepositSettler;
 
 class CompanyFundController extends Controller
 {
@@ -236,6 +237,52 @@ class CompanyFundController extends Controller
             'data'            => $transaction,
             'checkout_amount' => $checkoutTotal,
             'reference'       => $transaction->reference,
+        ]);
+    }
+
+    public function verifyDeposit(Request $request, string $reference, MoniepointService $moniepoint,DepositSettler $settler
+    ) {
+        $user = $request->user();
+
+        $transaction = Transaction::where('reference', $reference)
+            ->where('transaction_type', 'deposit')
+            ->whereHas('company', fn ($q) => $q->where('user_id', $user->id))
+            ->first();
+
+        if (!$transaction) {
+            return response()->json(['status' => false, 'message' => 'Deposit not found.'], 404);
+        }
+
+        if ($transaction->status === 'successful') {
+            return response()->json(['status' => true, 'message' => 'Deposit already confirmed.', 'data' => $transaction]);
+        }
+
+        try {
+            $remote = $moniepoint->getTransactionByMerchantReference($reference);
+        } catch (\Throwable $e) {
+            Log::error('Moniepoint verify failed', ['reference' => $reference, 'error' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Could not reach Moniepoint. Try again.'], 502);
+        }
+
+        if (!$remote['found'] || !$remote['successful']) {
+            return response()->json([
+                'status'            => false,
+                'pending'           => true,
+                'message'           => 'Payment not completed yet.',
+                'moniepoint_status' => $remote['status'] ?? null,
+            ]);
+        }
+
+        if (empty($remote['moniepoint_reference']) || empty($remote['amount_kobo'])) {
+            return response()->json(['status' => false, 'message' => 'Incomplete data from Moniepoint.'], 422);
+        }
+
+        $result = $settler->settle($reference, $remote['moniepoint_reference'], $remote['amount_kobo'], 'verify');
+
+        return response()->json([
+            'status'  => $result['status'],
+            'message' => $result['message'],
+            'data'    => $transaction->fresh(),
         ]);
     }
 

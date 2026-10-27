@@ -96,6 +96,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // funding
     Route::post('company-funding', [CompanyFundController::class, 'Deposit']);
+    Route::get('/deposit/verify/{reference}', [CompanyFundController::class, 'verifyDeposit']);
     Route::post('create-account', [AdminActionsController::class, 'createAccount']);
     Route::get('get-account', [AdminActionsController::class, 'getAccount']);
     Route::get('all-banks', [CompanyFundController::class, 'listFlutterwaveBanks']);

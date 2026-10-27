@@ -83,4 +83,50 @@ class MoniepointService
 
         return $res->json() ?? [];
     }
+
+    public function getTransactionByMerchantReference(string $merchantReference): array
+    {
+        $send = fn () => Http::withToken($this->token())
+            ->acceptJson()
+            ->timeout(20)
+            ->get($this->baseUrl() . '/v1/transactions/merchants/' . urlencode($merchantReference));
+
+        $response = $send();
+
+        if ($response->status() === 401) {      // token expired: refresh once
+            Cache::forget('moniepoint:token');
+            $response = $send();
+        }
+
+        if (!$response->successful()) {
+            Log::warning('Moniepoint GET by merchantReference failed', [
+                'merchant_reference' => $merchantReference,
+                'http_status'        => $response->status(),
+                'body'               => $response->body(),
+            ]);
+
+            return ['found' => false];
+        }
+
+        $body = $response->json();
+        Log::info('Moniepoint GET by merchantReference response', ['body' => $body]); // remove once confirmed
+
+        $data = $body['data'] ?? $body;
+        if (is_array($data) && isset($data[0])) {
+            $data = $data[0];
+        }
+
+        $status = strtoupper((string) ($data['transactionStatus'] ?? $data['status'] ?? ''));
+        $code   = (string) ($data['responseCode'] ?? '');
+
+        return [
+            'found'                => true,
+            'successful'           => in_array($status, ['COMPLETED', 'APPROVED', 'SUCCESSFUL'], true)
+                                    && in_array($code, ['20000', '00', ''], true),
+            'status'               => $status,
+            'response_code'        => $code,
+            'amount_kobo'          => isset($data['amount']) ? (int) round((float) $data['amount']) : null,
+            'moniepoint_reference' => $data['transactionReference'] ?? null,
+        ];
+    }
 }
