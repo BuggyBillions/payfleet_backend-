@@ -60,7 +60,7 @@ return [
         'client_secret'   => env('MONIEPOINT_CLIENT_SECRET'),
         'webhook_secret'  => env('MONIEPOINT_WEBHOOK_SECRET'),
         'terminal_serial' => env('MONIEPOINT_TERMINAL_SERIAL'),
-        'deposit_fee'     => env('MONIEPOINT_DEPOSIT_FEE', 100),
+        'deposit_fee' => (float) env('MONIEPOINT_DEPOSIT_FEE', 100),
         'amount_in_kobo'  => env('MONIEPOINT_AMOUNT_IN_KOBO', false), 
     ],
 ];

@@ -12,7 +12,8 @@ class Deposit extends Model
     protected $fillable = [
         'amount',
         'company_id',
-        'transaction_id'
+        'transaction_id',
+        'status',
     ];
 
     public function Transaction()

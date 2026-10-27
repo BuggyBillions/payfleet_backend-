@@ -178,16 +178,17 @@ class CompanyFundController extends Controller
         try {
             $transaction = DB::transaction(function () use ($company, $user, $amount) {
                 $currentBalance = (float) $company->balance;
-
+                $reference = 'PAYDEP' . strtoupper(Str::random(15));
                 $transaction = Transaction::create([
                     'company_id'       => $company->id,
-                    'reference'        => 'PAYDEP' . strtoupper(Str::random(15)), // alphanumeric: safer as merchantReference
+                    'reference'        => $reference,
                     'amount'           => $amount,
                     'previous_balance' => $currentBalance,
                     'current_balance'  => $currentBalance,
                     'type'             => 'CREDIT',
                     'transaction_type' => 'deposit',
                     'status'           => 'pending',
+                    'moniepoint_reference' => $reference,
                     'description'      => 'Company deposit',
                 ]);
 
@@ -240,31 +241,49 @@ class CompanyFundController extends Controller
         ]);
     }
 
-    public function verifyDeposit(Request $request, string $reference, MoniepointService $moniepoint,DepositSettler $settler
-    ) {
+    public function verifyDeposit(Request $request,string $reference,MoniepointService $moniepoint,DepositSettler $settler) 
+    {
         $user = $request->user();
-
+    
+        if (!$user) {
+            return response()->json(['status' => false, 'message' => 'Unauthenticated.'], 401);
+        }
+    
+        // Only companies owned by this user
+        $companyIds = Company::where('user_id', $user->id)->pluck('id');
+    
         $transaction = Transaction::where('reference', $reference)
             ->where('transaction_type', 'deposit')
-            ->whereHas('company', fn ($q) => $q->where('user_id', $user->id))
+            ->whereIn('company_id', $companyIds)
             ->first();
-
+    
         if (!$transaction) {
             return response()->json(['status' => false, 'message' => 'Deposit not found.'], 404);
         }
-
+    
         if ($transaction->status === 'successful') {
-            return response()->json(['status' => true, 'message' => 'Deposit already confirmed.', 'data' => $transaction]);
+            return response()->json([
+                'status'  => true,
+                'message' => 'Deposit already confirmed.',
+                'data'    => $transaction,
+            ]);
         }
-
+    
         try {
             $remote = $moniepoint->getTransactionByMerchantReference($reference);
         } catch (\Throwable $e) {
-            Log::error('Moniepoint verify failed', ['reference' => $reference, 'error' => $e->getMessage()]);
-            return response()->json(['status' => false, 'message' => 'Could not reach Moniepoint. Try again.'], 502);
+            Log::error('Moniepoint verify failed', [
+                'reference' => $reference,
+                'error'     => $e->getMessage(),
+            ]);
+    
+            return response()->json([
+                'status'  => false,
+                'message' => 'Could not reach Moniepoint. Try again.',
+            ], 502);
         }
-
-        if (!$remote['found'] || !$remote['successful']) {
+    
+        if (empty($remote['found']) || empty($remote['successful'])) {
             return response()->json([
                 'status'            => false,
                 'pending'           => true,
@@ -272,13 +291,36 @@ class CompanyFundController extends Controller
                 'moniepoint_status' => $remote['status'] ?? null,
             ]);
         }
-
+    
         if (empty($remote['moniepoint_reference']) || empty($remote['amount_kobo'])) {
-            return response()->json(['status' => false, 'message' => 'Incomplete data from Moniepoint.'], 422);
+            Log::error('Incomplete Moniepoint verify data', ['reference' => $reference, 'remote' => $remote]);
+    
+            return response()->json([
+                'status'  => false,
+                'message' => 'Incomplete data from Moniepoint.',
+            ], 422);
         }
-
-        $result = $settler->settle($reference, $remote['moniepoint_reference'], $remote['amount_kobo'], 'verify');
-
+    
+        try {
+            $result = $settler->settle(
+                $reference,
+                $remote['moniepoint_reference'],
+                (int) $remote['amount_kobo'],
+                'verify'
+            );
+        } catch (\Throwable $e) {
+            Log::error('Deposit settle failed', [
+                'reference' => $reference,
+                'error'     => $e->getMessage(),
+                'line'      => $e->getLine(),
+            ]);
+    
+            return response()->json([
+                'status'  => false,
+                'message' => 'Could not confirm deposit. Please try again.',
+            ], 500);
+        }
+    
         return response()->json([
             'status'  => $result['status'],
             'message' => $result['message'],

@@ -18,7 +18,8 @@ class Transaction extends Model
         'type',
         'transaction_type',
         'status',
-        'description'
+        'description',
+        'moniepoint_reference'
     ];
 
     public function Deposit()

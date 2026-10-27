@@ -107,7 +107,7 @@ class DepositSettler
             $transaction->current_balance      = $newBalance;
             $transaction->save();
 
-            Deposit::where('transaction_id', $transaction->id)->update(['status' => 'successful']);
+            // Deposit::where('transaction_id', $transaction->id)->update(['status' => 'successful']);
 
             ActivityLog::create([
                 'user_id' => $company->user_id,

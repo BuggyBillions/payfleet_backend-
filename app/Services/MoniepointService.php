@@ -62,12 +62,12 @@ class MoniepointService
                 'amount'            => $amount,
                 'merchantReference' => $merchantReference,
                 'transactionType'   => 'PURCHASE',
-                'paymentMethod'     => 'CARD_PURCHASE', // check docs for the transfer option
+                'paymentMethod'     => config('services.moniepoint.payment_method', 'POS_TRANSFER'),
             ]);
 
         $res = $send();
 
-        if ($res->status() === 401) {          // token expired: refresh once
+        if ($res->status() === 401) {
             Cache::forget('moniepoint:token');
             $res = $send();
         }
@@ -93,7 +93,7 @@ class MoniepointService
 
         $response = $send();
 
-        if ($response->status() === 401) {      // token expired: refresh once
+        if ($response->status() === 401) {
             Cache::forget('moniepoint:token');
             $response = $send();
         }
@@ -109,23 +109,36 @@ class MoniepointService
         }
 
         $body = $response->json();
-        Log::info('Moniepoint GET by merchantReference response', ['body' => $body]); // remove once confirmed
+        Log::info('Moniepoint GET by merchantReference response', ['body' => $body]); // remove once stable
 
         $data = $body['data'] ?? $body;
         if (is_array($data) && isset($data[0])) {
             $data = $data[0];
         }
 
-        $status = strtoupper((string) ($data['transactionStatus'] ?? $data['status'] ?? ''));
-        $code   = (string) ($data['responseCode'] ?? '');
+        $processing = strtoupper((string) ($data['processingStatus'] ?? $data['transactionStatus'] ?? $data['status'] ?? ''));
+        $code       = (string) ($data['responseCode'] ?? '');
+        $message    = strtoupper((string) ($data['responseMessage'] ?? ''));
+        $actual     = $data['actualAmount'] ?? null;
+
+        // Paid only when Moniepoint reports it processed, approved, and an actual amount was received
+        $successStates = ['PROCESSED', 'COMPLETED', 'APPROVED', 'SUCCESSFUL', 'SUCCESS', 'PAID'];
+
+        $successful = in_array($processing, $successStates, true)
+            && in_array($code, ['00', '20000'], true)
+            && ($message === '' || $message === 'APPROVED')
+            && is_numeric($actual)
+            && (float) $actual > 0;
 
         return [
             'found'                => true,
-            'successful'           => in_array($status, ['COMPLETED', 'APPROVED', 'SUCCESSFUL'], true)
-                                    && in_array($code, ['20000', '00', ''], true),
-            'status'               => $status,
+            'successful'           => $successful,
+            'expired'              => $processing === 'EXPIRED',
+            'status'               => $processing,
             'response_code'        => $code,
-            'amount_kobo'          => isset($data['amount']) ? (int) round((float) $data['amount']) : null,
+            'request_amount_kobo'  => isset($data['requestAmount']) ? (int) round((float) $data['requestAmount']) : null,
+            // what the customer actually paid (kobo), never the requested amount
+            'amount_kobo'          => is_numeric($actual) ? (int) round((float) $actual) : null,
             'moniepoint_reference' => $data['transactionReference'] ?? null,
         ];
     }
