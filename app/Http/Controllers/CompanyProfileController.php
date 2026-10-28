@@ -17,6 +17,8 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use App\Models\Tier;
 use App\Models\TierUpgradeRequest;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class CompanyProfileController extends Controller
 {
@@ -369,15 +371,15 @@ class CompanyProfileController extends Controller
 
         if (!$user) {
             return response()->json([
-                'status' => false,
-                'message' => 'Unauthorized.'
+                'status'  => false,
+                'message' => 'Unauthorized.',
             ], 401);
         }
 
         if (!$this->isFullCompany($user)) {
             return response()->json([
-                'status' => false,
-                'message' => 'Only company accounts can request a tier upgrade.'
+                'status'  => false,
+                'message' => 'Only company accounts can request a tier upgrade.',
             ], 403);
         }
 
@@ -385,89 +387,131 @@ class CompanyProfileController extends Controller
 
         if (!$company) {
             return response()->json([
-                'status' => false,
-                'message' => 'Company not found.'
+                'status'  => false,
+                'message' => 'Company not found.',
             ], 404);
         }
 
         $validated = $request->validate([
-            'requested_tier' => ['required','integer','exists:tiers,level'],
+            'requested_tier' => ['required', 'integer', 'exists:tiers,level'],
         ]);
 
-        $currentTier = (int) $company->tier;
+        $currentTier   = (int) $company->tier;
         $requestedTier = (int) $validated['requested_tier'];
 
         if ($requestedTier <= $currentTier) {
             return response()->json([
-                'status' => false,
-                'message' => 'You can only upgrade to a higher tier.'
+                'status'  => false,
+                'message' => 'You can only upgrade to a higher tier.',
             ], 422);
         }
 
-        $existingRequest = TierUpgradeRequest::where(
-            'company_id',
-            $company->id
-        )
-        ->where('status', 'pending')
-        ->first();
+        $existingRequest = TierUpgradeRequest::where('company_id', $company->id)
+            ->where('status', 'pending')
+            ->first();
 
         if ($existingRequest) {
             return response()->json([
-                'status' => false,
-                'message' => 'You already have a pending tier upgrade request.'
+                'status'  => false,
+                'message' => 'You already have a pending tier upgrade request.',
             ], 422);
         }
 
         if ($requestedTier >= 2) {
             if (empty($company->bvn)) {
                 return response()->json([
-                    'status' => false,
-                    'message' => 'BVN is required before upgrading to Tier 2.'
+                    'status'  => false,
+                    'message' => 'BVN is required before upgrading to Tier 2.',
                 ], 422);
             }
 
             if (empty($company->nin)) {
                 return response()->json([
-                    'status' => false,
-                    'message' => 'NIN is required before upgrading to Tier 2.'
+                    'status'  => false,
+                    'message' => 'NIN is required before upgrading to Tier 2.',
                 ], 422);
             }
         }
 
+        $businessData = [];
 
         if ($requestedTier >= 3) {
             if (empty($company->mermat)) {
                 return response()->json([
-                    'status' => false,
-                    'message' => 'MEMART is required before upgrading to Tier 3.'
+                    'status'  => false,
+                    'message' => 'MEMART is required before upgrading to Tier 3.',
                 ], 422);
             }
 
             if (empty($company->cac)) {
                 return response()->json([
-                    'status' => false,
-                    'message' => 'CAC is required before upgrading to Tier 3.'
+                    'status'  => false,
+                    'message' => 'CAC is required before upgrading to Tier 3.',
                 ], 422);
             }
+
+            // Use what was sent, otherwise what is already saved on the company.
+            // Accept "BN-76543456789" too, but store the digits only.
+            $bnInput = trim((string) ($request->input('bn_number') ?: $company->bn_number));
+            $bnInput = preg_replace('/^BN-?/i', '', $bnInput);
+
+            $request->merge([
+                'bn_number'    => $bnInput,
+                'company_name' => trim((string) ($request->input('company_name') ?: $company->company_name)),
+            ]);
+
+            $businessData = $request->validate([
+                'bn_number' => [
+                    'required',
+                    'regex:/^\d{5,15}$/',
+                    Rule::unique('companies', 'bn_number')->ignore($company->id),
+                ],
+                'company_name' => ['required', 'string', 'max:255'],
+            ], [
+                'bn_number.required'  => 'BN number is required before upgrading to Tier 3.',
+                'bn_number.regex'     => 'BN number must contain digits only (no "BN-" prefix).',
+                'bn_number.unique'    => 'This BN number is already registered to another company.',
+                'company_name.required' => 'Company name is required before upgrading to Tier 3.',
+            ]);
         }
 
-        $upgradeRequest = TierUpgradeRequest::create([
-            'company_id' => $company->id,
-            'current_tier' => $currentTier,
-            'requested_tier' => $requestedTier,
-            'status' => 'pending',
-        ]);
+        try {
+            $upgradeRequest = DB::transaction(function () use ($company, $currentTier, $requestedTier, $businessData) {
+                if (!empty($businessData)) {
+                    $company->update($businessData);
+                }
+
+                return TierUpgradeRequest::create([
+                    'company_id'     => $company->id,
+                    'current_tier'   => $currentTier,
+                    'requested_tier' => $requestedTier,
+                    'status'         => 'pending',
+                ]);
+            });
+        } catch (\Throwable $e) {
+            Log::error('Tier upgrade request failed', [
+                'company_id' => $company->id,
+                'error'      => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'status'  => false,
+                'message' => 'Could not submit the tier upgrade request. Please try again.',
+            ], 500);
+        }
 
         return response()->json([
-            'status' => true,
+            'status'  => true,
             'message' => 'Tier upgrade request submitted successfully. Waiting for admin approval.',
-            'data' => [
-                'id' => $upgradeRequest->id,
-                'company_id' => $company->id,
-                'current_tier' => $currentTier,
+            'data'    => [
+                'id'             => $upgradeRequest->id,
+                'company_id'     => $company->id,
+                'current_tier'   => $currentTier,
                 'requested_tier' => $requestedTier,
-                'status' => $upgradeRequest->status,
-            ]
+                'status'         => $upgradeRequest->status,
+                'bn_number'      => $requestedTier >= 3 ? $company->bn_number : null,
+                'company_name'   => $requestedTier >= 3 ? $company->company_name : null,
+            ],
         ], 201);
     }
 

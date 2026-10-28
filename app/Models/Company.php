@@ -26,6 +26,8 @@ class Company extends Model
         'cac',
         'mermat',
         'status_report',
+        'bn_number',
+        'company_name',
     ];
 
     protected $hidden = [
