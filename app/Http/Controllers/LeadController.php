@@ -19,7 +19,7 @@ class LeadController extends Controller
 
     private function canUseLeads($user): bool
     {
-        return in_array($user->role, ['admin', 'sales'], true);
+        return in_array($user->role, ['admin', 'sales','company', 'finance','support'], true);
     }
 
     /** Admins see all leads, sales experts only their own. */

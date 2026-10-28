@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\Validator;
 use App\Models\Company;
 use App\Models\Deposit;
 use App\Models\Employees;
+use App\Mail\OtpMail;
+use Illuminate\Support\Facades\Mail;
 use App\Models\Notification;
 use App\Models\Payment;
 use App\Models\Tier;
@@ -22,6 +24,137 @@ use Illuminate\Support\Facades\Log;
 
 class AuthController extends Controller
 {
+    // public function Register(Request $request)
+    // {
+    //     $validator = Validator::make($request->all(), [
+    //         'name'     => 'required|string|max:255|unique:companies,name',
+    //         'email'    => 'required|email|unique:companies,email',
+    //         'phone'    => 'required|string',
+    //         'about'    => 'nullable|string',
+    //         'address'  => 'nullable|string',
+    //         'password' => 'required|string|min:8',
+    //         'logo'     => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
+    //     ]);
+    //     $otp = random_int(100000, 999999);
+
+    //     if ($validator->fails()) {
+    //         return response()->json(['errors' => $validator->errors()], 422);
+    //     }
+
+    //     $logoPath = null;
+    //     if ($request->hasFile('logo')) {
+    //         $logoPath = $request->file('logo')->store('company_logos', 'public');
+    //     }
+        
+    //     $user = User::create([
+    //        'name'     => $request->name, 
+    //        'email'    => $request->email,
+    //        'phone'    => $request->phone,
+    //        'password' => Hash::make($request->password),
+    //        'otp'            => $otp,
+    //         'otp_expires_at' => now()->addMinutes(20),
+    //     ]);
+
+    //     $company = Company::create([
+    //         'name'     => $request->name,
+    //         'email'    => $request->email,
+    //         'phone'    => $request->phone,
+    //         'logo'     => $logoPath,
+    //         'about'    => $request->about,
+    //         'address'  => $request->address,
+    //         'password' => Hash::make($request->password),
+    //         'pin'      => Hash::make('1234'),
+    //         'user_id'  => $user->id,
+    //     ]);
+         
+    //     ActivityLog::insert([
+    //         'user_id' => $user->id,
+    //         'action' => 'Account Creation',
+    //         'details' => 'Company account created successfully.',
+    //         'type' => 'system',
+    //         'created_at' => now(),
+    //         'updated_at' => now()
+    //     ]);
+
+    //     Notification::create([
+    //         'user_id' => $user->id,
+    //         'title' => 'Account Creation',
+    //         'message' => 'Company Account created successfully.',
+    //         'type' => 'system',
+    //     ]);
+
+    //     try {
+    //         $response = Http::acceptJson()
+    //             ->asJson()
+    //             ->timeout(30)
+    //             ->post(
+    //                 rtrim(config('services.termii.base_url'), '/') . '/api/templates/send-email',
+    //                 [
+    //                     'api_key' => config('services.termii.api_key'),
+    //                     'email' => $user->email,
+    //                     'subject' => 'Welcome to Payfleet - Verify Your Account',
+    //                     'email_configuration_id' => config('services.termii.email_configuration_id'),
+    //                     'template_id' => config('services.termii.registration_template'),
+
+    //                     'variables' => [
+    //                         'name' => $user->name,
+    //                         'otp'        => (string) $otp,
+    //                     ],
+    //                 ]
+    //             );
+
+    //         Log::info('Termii Registration Template Response', [
+    //             'user_id' => $user->id,
+    //             'email'   => $user->email,
+    //             'template_id' => config('services.termii.registration_template'),
+    //             'status'  => $response->status(),
+    //             'body'    => $response->body(),
+    //             'json'    => $response->json(),
+    //         ]);
+
+    //         if (!$response->successful()) {
+
+    //             Log::error('Termii Registration Template Failed', [
+    //                 'user_id' => $user->id,
+    //                 'email'   => $user->email,
+    //                 'template_id' => config('services.termii.registration_template'),
+    //                 'status'  => $response->status(),
+    //                 'body'    => $response->body(),
+    //             ]);
+
+    //             $user->delete();
+
+    //             return response()->json([
+    //                 'status'  => false,
+    //                 'message' => 'Registration failed because we could not send the verification email.',
+    //             ], 500);
+    //         }
+
+    //     } catch (\Throwable $e) {
+
+    //         Log::error('Termii Registration Template Exception', [
+    //             'user_id' => $user->id,
+    //             'email'   => $user->email,
+    //             'template_id' => config('services.termii.registration_template'),
+    //             'error'   => $e->getMessage(),
+    //             'trace'   => $e->getTraceAsString(),
+    //         ]);
+
+    //         // Delete user if email sending throws an exception
+    //         $user->delete();
+
+    //         return response()->json([
+    //             'status'  => false,
+    //             'message' => 'Registration failed because we could not send the verification email.',
+    //         ], 500);
+    //     }
+
+    //     return response()->json([
+    //         'message' => 'Company registered successfully',
+    //         'company' => $company
+    //     ], 201);
+    // }
+
     public function Register(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -82,70 +215,23 @@ class AuthController extends Controller
         ]);
 
         try {
-            $response = Http::acceptJson()
-                ->asJson()
-                ->timeout(30)
-                ->post(
-                    rtrim(config('services.termii.base_url'), '/') . '/api/templates/send-email',
-                    [
-                        'api_key' => config('services.termii.api_key'),
-                        'email' => $user->email,
-                        'subject' => 'Welcome to Payfleet - Verify Your Account',
-                        'email_configuration_id' => config('services.termii.email_configuration_id'),
-                        'template_id' => config('services.termii.registration_template'),
-
-                        'variables' => [
-                            'name' => $user->name,
-                            'otp'        => (string) $otp,
-                        ],
-                    ]
-                );
-
-            Log::info('Termii Registration Template Response', [
-                'user_id' => $user->id,
-                'email'   => $user->email,
-                'template_id' => config('services.termii.registration_template'),
-                'status'  => $response->status(),
-                'body'    => $response->body(),
-                'json'    => $response->json(),
-            ]);
-
-            if (!$response->successful()) {
-
-                Log::error('Termii Registration Template Failed', [
-                    'user_id' => $user->id,
-                    'email'   => $user->email,
-                    'template_id' => config('services.termii.registration_template'),
-                    'status'  => $response->status(),
-                    'body'    => $response->body(),
-                ]);
-
-                $user->delete();
-
-                return response()->json([
-                    'status'  => false,
-                    'message' => 'Registration failed because we could not send the verification email.',
-                ], 500);
-            }
-
+            Mail::to($user->email)->send(new OtpMail($user->name, (string) $otp, 'register'));
         } catch (\Throwable $e) {
-
-            Log::error('Termii Registration Template Exception', [
+            Log::error('Registration email failed', [
                 'user_id' => $user->id,
                 'email'   => $user->email,
-                'template_id' => config('services.termii.registration_template'),
                 'error'   => $e->getMessage(),
-                'trace'   => $e->getTraceAsString(),
-            ]);
+        ]);
 
-            // Delete user if email sending throws an exception
-            $user->delete();
+    // Remove everything created for this registration so the person can try again
+    $company->delete();
+    $user->delete();
 
-            return response()->json([
-                'status'  => false,
-                'message' => 'Registration failed because we could not send the verification email.',
-            ], 500);
-        }
+    return response()->json([
+        'status'  => false,
+        'message' => 'Registration failed because we could not send the verification email.',
+    ], 500);
+}
 
         return response()->json([
             'message' => 'Company registered successfully',
