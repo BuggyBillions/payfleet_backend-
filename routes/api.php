@@ -8,6 +8,7 @@ use App\Http\Controllers\CompanyProfileController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\LeadController;
 use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\PaymentSettingController;
 use App\Http\Controllers\TierController;
 use App\Models\Employee;
 use Illuminate\Http\Request;
@@ -151,4 +152,11 @@ Route::middleware('auth:sanctum')->prefix('leads')->group(function () {
     Route::put('/{id}', [LeadController::class, 'update'])->whereNumber('id');
     Route::post('/{id}/follow-ups', [LeadController::class, 'addFollowUp'])->whereNumber('id');
     Route::delete('/{id}', [LeadController::class, 'destroy'])->whereNumber('id');
+});
+
+
+Route::middleware('auth:sanctum')->prefix('payment-settings')->group(function () {
+    Route::get('/', [PaymentSettingController::class, 'show']);
+    Route::post('/', [PaymentSettingController::class, 'store']);   // works once only
+    Route::put('/', [PaymentSettingController::class, 'update']);   // edit afterwards
 });
