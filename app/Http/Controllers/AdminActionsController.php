@@ -532,6 +532,11 @@ class AdminActionsController extends Controller
             'cac'           => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
             'mermat'        => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
             'status_report' => 'nullable|image|mimes:png,jpg,jpeg|max:2048',
+            'bn_number'     => ['nullable', 'regex:/^\d{5,15}$/', 'unique:companies,bn_number,' . $company->id],
+        'company_name'  => 'nullable|string|max:255',
+        ], [
+        'bn_number.regex'  => 'BN number must contain digits only (no "BN-" prefix).',
+        'bn_number.unique' => 'This BN number is already registered to another company.',
         ]);
 
         if ($validator->fails()) {
@@ -575,6 +580,14 @@ class AdminActionsController extends Controller
 
             if ($request->has('nin')) {
                 $companyUpdateData['nin'] = $request->nin;
+            }
+
+            if ($request->has('bn_number')) {
+                $companyUpdateData['bn_number'] = $request->bn_number;
+            }
+
+            if ($request->has('company_name')) {
+                $companyUpdateData['company_name'] = $request->company_name;
             }
 
             if ($request->has('pin')) {
@@ -656,6 +669,8 @@ class AdminActionsController extends Controller
 
                         'bvn' => $company->bvn,
                         'nin' => $company->nin,
+                        'bn_number'    => $company->bn_number,
+                        'company_name' => $company->company_name,
                         'balance' => $company->balance,
                     ],
 
