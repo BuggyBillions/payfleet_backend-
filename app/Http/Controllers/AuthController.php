@@ -385,18 +385,19 @@ class AuthController extends Controller
                 ->post(
                     rtrim(config('services.termii.base_url'), '/') . '/api/templates/send-email',
                     [
-                        'api_key' => config('services.termii.api_key'),
-                        'email' => $user->email,
-                        'subject' => 'Payfleet - Your New Verification Code',
+                        'api_key'                => config('services.termii.api_key'),
+                        'email'                  => $user->email,
+                        'subject'                => 'Payfleet - Your New Verification Code',
                         'email_configuration_id' => config('services.termii.email_configuration_id'),
-                        'template_id' => config('services.termii.resendotp_template'),
-                        'variables' => [
-                            'first_name' => $user->first_name,
-                            'last_name'  => $user->last_name,
-                            'otp'        => (string) $otp,
+                        'template_id'            => config('services.termii.resendotp_template'),
+                        // Changed: the template expects "name" and "otp"
+                        'variables'              => [
+                            'name' => $user->name,
+                            'otp'  => (string) $otp,
                         ],
                     ]
                 );
+
             Log::info('Termii Resend OTP Template Response', [
                 'user_id'     => $user->id,
                 'email'       => $user->email,

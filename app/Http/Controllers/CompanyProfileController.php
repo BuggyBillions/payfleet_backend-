@@ -27,38 +27,38 @@ class CompanyProfileController extends Controller
         $request->validate([
             'email' => ['required', 'email'],
         ]);
-
-        $user = User::select('id','name','email')
+    
+        $user = User::select('id', 'name', 'email')
             ->where('email', $request->email)
             ->first();
-
+    
         if (!$user) {
             return response()->json([
                 'status'  => false,
                 'message' => 'User not found.',
             ], 404);
         }
-
+    
         PasswordResetToken::where('user_id', $user->id)->delete();
-
+    
         $resetOtp = str_pad(
             random_int(0, 999999),
             6,
             '0',
             STR_PAD_LEFT
         );
-
+    
         $token = Str::random(64);
-
-        $expiresAt = now()->addMinutes(10);
-
+    
+        $expiresAt = now()->addMinutes(20);
+    
         PasswordResetToken::create([
             'user_id'    => $user->id,
             'token'      => $token,
             'reset_otp'  => $resetOtp,
             'expires_at' => $expiresAt,
         ]);
-
+    
         try {
             $response = Http::acceptJson()
                 ->asJson()
@@ -66,19 +66,19 @@ class CompanyProfileController extends Controller
                 ->post(
                     rtrim(config('services.termii.base_url'), '/') . '/api/templates/send-email',
                     [
-                        'api_key' => config('services.termii.api_key'),
-                        'email' => $user->email,
-                        'subject' => 'Payfleet - Password Reset Code',
+                        'api_key'                => config('services.termii.api_key'),
+                        'email'                  => $user->email,
+                        'subject'                => 'Payfleet - Password Reset Code',
                         'email_configuration_id' => config('services.termii.email_configuration_id'),
-                        'template_id' => config('services.termii.forget_template'),
-                        'variables' => [
-                            'first_name' => $user->first_name,
-                            'last_name'  => $user->last_name,
-                            'otp'        => (string) $resetOtp,
+                        'template_id'            => config('services.termii.forget_template'),
+                        // Changed: the template expects "name" and "otp"
+                        'variables'              => [
+                            'name' => $user->name,
+                            'otp'  => (string) $resetOtp,
                         ],
                     ]
                 );
-
+    
             Log::info('Termii Forgot Password Template Response', [
                 'user_id'     => $user->id,
                 'email'       => $user->email,
@@ -87,9 +87,9 @@ class CompanyProfileController extends Controller
                 'body'        => $response->body(),
                 'json'        => $response->json(),
             ]);
-
+    
             if (!$response->successful()) {
-
+    
                 Log::error('Termii Forgot Password Email Failed', [
                     'user_id'     => $user->id,
                     'email'       => $user->email,
@@ -97,53 +97,52 @@ class CompanyProfileController extends Controller
                     'status'      => $response->status(),
                     'body'        => $response->body(),
                 ]);
-
+    
                 // Delete the reset record because email was not sent
                 PasswordResetToken::where('user_id', $user->id)->delete();
-
+    
                 return response()->json([
                     'status'  => false,
                     'message' => 'We could not send the password reset code. Please try again.',
                 ], 500);
             }
-
+    
         } catch (\Throwable $e) {
-
+    
             Log::error('Termii Forgot Password Template Exception', [
                 'user_id'     => $user->id,
                 'email'       => $user->email,
                 'template_id' => config('services.termii.forget_template'),
                 'error'       => $e->getMessage(),
             ]);
-
+    
             // Delete the reset record because email was not sent
             PasswordResetToken::where('user_id', $user->id)->delete();
-
+    
             return response()->json([
                 'status'  => false,
                 'message' => 'We could not send the password reset code. Please try again.',
             ], 500);
         }
-
+    
         ActivityLog::create([
             'user_id' => $user->id,
             'action'  => 'Forgot Password',
             'details' => 'User requested a password reset code.',
             'type'    => 'security',
         ]);
-
+    
         Notification::create([
             'user_id' => $user->id,
             'title'   => 'Password Reset',
             'message' => 'A password reset code has been sent to your email.',
             'type'    => 'security',
         ]);
-
-
+    
         return response()->json([
             'status'  => true,
             'message' => 'Password reset code sent successfully.',
-            'data' => [
+            'data'    => [
                 'token'      => $token,
                 'expires_at' => $expiresAt->toDateTimeString(),
             ],

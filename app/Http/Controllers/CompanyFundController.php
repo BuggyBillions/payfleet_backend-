@@ -217,7 +217,7 @@ class CompanyFundController extends Controller
         try {
             $moniepoint->pushToTerminal($terminalSerial, $checkoutTotal, $transaction->reference);
         } catch (\Throwable $e) {
-            $transaction->update(['status' => 'failed']);
+            // $transaction->update(['status' => 'failed']);
 
             return response()->json([
                 'status'  => false,

@@ -36,16 +36,7 @@ class ReconcileDeposits extends Command
                         $settler->settle($t->reference, $r['moniepoint_reference'], (int) $r['amount_kobo'], 'reconcile');
                         return;
                     }
-
-                    // Moniepoint says the request expired or failed: stop waiting for it
-                    if (in_array($r['status'] ?? '', ['EXPIRED', 'FAILED', 'CANCELLED', 'CANCELED', 'DECLINED', 'REJECTED'], true)
-                        && $t->status === 'pending') {
-                        $t->update(['status' => 'failed']);
-                        Log::info('Deposit marked failed (not paid)', [
-                            'reference'         => $t->reference,
-                            'moniepoint_status' => $r['status'],
-                        ]);
-                    }
+                    
                 } catch (\Throwable $e) {
                     Log::error('Reconcile failed', ['reference' => $t->reference, 'error' => $e->getMessage()]);
                 }
