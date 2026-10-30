@@ -160,3 +160,4 @@ Route::middleware('auth:sanctum')->prefix('payment-settings')->group(function ()
     Route::post('/', [PaymentSettingController::class, 'store']);   // works once only
     Route::put('/', [PaymentSettingController::class, 'update']);   // edit afterwards
 });
+Route::post('/webhooks/flutterwave', [\App\Http\Controllers\FlutterwaveWebhookController::class, 'handle']);

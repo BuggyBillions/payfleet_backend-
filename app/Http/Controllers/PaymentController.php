@@ -17,6 +17,9 @@ use App\Models\Notification;
 use App\Models\Payment;
 use App\Models\Transaction;
 use Illuminate\Support\Facades\Hash;
+use App\Models\PaymentSetting;
+use App\Services\PayrollTransferSettler;
+use Illuminate\Support\Facades\Log;
 
 class PaymentController extends Controller
 {
@@ -100,28 +103,38 @@ class PaymentController extends Controller
             ], 500);
         }
 
-        DB::beginTransaction();
+        // Fees now come from the payment_settings table
+        $settings = PaymentSetting::current();
+
+        if (!$settings) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Payment settings have not been configured. Please contact an admin.',
+            ], 422);
+        }
 
         try {
-            $employees = Employees::where('company_id', $company->id)
-                ->get();
+            $employees = Employees::where('company_id', $company->id)->get();
 
             if ($employees->isEmpty()) {
-                DB::rollBack();
                 return response()->json([
                     'status'  => false,
                     'message' => 'No employees found for this company.',
                 ], 404);
             }
 
+            $settler = app(PayrollTransferSettler::class);
+
             $results = [];
 
-            $totalEmployees  = $employees->count();
-            $totalPaid       = 0;
-            $totalSkipped    = 0;
-            $totalFailed     = 0;
-            $totalDeductions = 0;
-            $totalAmountPaid = 0;
+            $totalEmployees      = $employees->count();
+            $totalPaid           = 0;
+            $totalPending        = 0;
+            $totalSkipped        = 0;
+            $totalFailed         = 0;
+            $totalDeductions     = 0;
+            $totalAmountPaid     = 0;
+            $totalProcessingFees = 0;
 
             $payrollMonth = now()->format('Y-m');
 
@@ -136,8 +149,9 @@ class PaymentController extends Controller
                     continue;
                 }
 
+                // Pending counts too, so payroll can't pay the same person twice while a transfer is in progress
                 $alreadyPaid = Payment::where('employee_id', $employee->id)
-                    ->where('status', 'successful')
+                    ->whereIn('status', ['successful', 'pending'])
                     ->whereYear('payment_date', now()->year)
                     ->whereMonth('payment_date', now()->month)
                     ->exists();
@@ -147,7 +161,7 @@ class PaymentController extends Controller
                     $results[] = [
                         'employee_id' => $employee->id,
                         'status'      => 'skipped',
-                        'reason'      => 'Employee has already been paid for this month.',
+                        'reason'      => 'Employee has already been paid (or is being paid) for this month.',
                     ];
                     continue;
                 }
@@ -170,11 +184,9 @@ class PaymentController extends Controller
                 $deductionAmount = 0;
                 if ($deduction) {
                     $createdDate = Carbon::parse($deduction->created_at);
-                    $noOfMonths = (int) $deduction->no_of_month;
+                    $noOfMonths  = (int) $deduction->no_of_month;
                     if ($noOfMonths > 0) {
-                        $deductionEndDate = $createdDate
-                            ->copy()
-                            ->addMonths($noOfMonths);
+                        $deductionEndDate = $createdDate->copy()->addMonths($noOfMonths);
 
                         if (now()->lt($deductionEndDate)) {
                             $deductionAmount = (float) $deduction->amount;
@@ -197,12 +209,10 @@ class PaymentController extends Controller
                         'deduction'    => $deductionAmount,
                         'net_salary'   => $netSalary,
                     ];
-
                     continue;
                 }
 
-                if (empty($employee->account_number) || empty($employee->bank_code)
-                ) {
+                if (empty($employee->account_number) || empty($employee->bank_code)) {
                     $totalSkipped++;
                     $results[] = [
                         'employee_id' => $employee->id,
@@ -211,6 +221,7 @@ class PaymentController extends Controller
                     ];
                     continue;
                 }
+
                 $employeeName = $employee->first_name;
                 if (!$employeeName && $employee->user_id) {
                     $employeeUser = User::find($employee->user_id);
@@ -226,37 +237,83 @@ class PaymentController extends Controller
                     $employee->id . '-' .
                     Str::upper(Str::random(10));
 
-                $previousBalance = (float) $company->balance;
-                if ($previousBalance < $netSalary) {
-                    Payment::create([
-                        'employee_id'   => $employee->id,
-                        'employee_name' => $employeeName,
-                        'amount'        => $netSalary,
-                        'payment_date'  => now()->toDateString(),
-                        'reference'     => $reference,
-                        'status'        => 'failed',
+                // Fee from payment_settings: VAT + Payfleet fee, plus the government fee from 10,000 up
+                $processingFee = $settings->processingFeeFor($netSalary);
+                $totalDebit    = round($netSalary + $processingFee, 2);
+
+                // Reserve the money first (lock the company row so two requests can't overspend)
+                $reservation = DB::transaction(function () use (
+                    $company, $employee, $employeeName, $netSalary, $processingFee, $totalDebit, $reference
+                ) {
+                    $lockedCompany   = Company::where('id', $company->id)->lockForUpdate()->first();
+                    $previousBalance = (float) $lockedCompany->balance;
+
+                    if ($previousBalance < $totalDebit) {
+                        $payment = Payment::create([
+                            'employee_id'    => $employee->id,
+                            'employee_name'  => $employeeName,
+                            'amount'         => $netSalary,
+                            'processing_fee' => $processingFee,
+                            'payment_date'   => now()->toDateString(),
+                            'reference'      => $reference,
+                            'status'         => 'failed',
+                        ]);
+
+                        return ['reserved' => false, 'payment' => $payment, 'available' => $previousBalance];
+                    }
+
+                    $currentBalance = round($previousBalance - $totalDebit, 2);
+
+                    $lockedCompany->balance = $currentBalance;
+                    $lockedCompany->save();
+
+                    $payment = Payment::create([
+                        'employee_id'    => $employee->id,
+                        'employee_name'  => $employeeName,
+                        'amount'         => $netSalary,
+                        'processing_fee' => $processingFee,
+                        'payment_date'   => now()->toDateString(),
+                        'reference'      => $reference,
+                        'status'         => 'pending',
                     ]);
 
-                    $totalFailed++;
-                    $results[] = [
-                        'employee_id' => $employee->id,
-                        'status'      => 'failed',
-                        'reason'      => 'Insufficient company balance.',
-                        'salary'      => $netSalary,
-                        'reference'   => $reference,
-                    ];
+                    Transaction::create([
+                        'company_id'       => $company->id,
+                        'reference'        => $reference,
+                        'amount'           => $totalDebit,
+                        'previous_balance' => $previousBalance,
+                        'current_balance'  => $currentBalance,
+                        'type'             => 'debit',
+                        'transaction_type' => 'payroll',
+                        'status'           => 'pending',
+                        'description'      => 'Payroll payment to ' . $employeeName
+                            . ' (Salary: ₦' . number_format($netSalary, 2)
+                            . ', Processing fee: ₦' . number_format($processingFee, 2) . ')',
+                    ]);
 
+                    return ['reserved' => true, 'payment' => $payment];
+                });
+
+                $payment = $reservation['payment'];
+
+                if (!$reservation['reserved']) {
+                    $totalFailed++;
+
+                    $results[] = [
+                        'employee_id'       => $employee->id,
+                        'status'            => 'failed',
+                        'reason'            => 'Insufficient company balance.',
+                        'salary'            => $netSalary,
+                        'processing_fee'    => $processingFee,
+                        'total_required'    => $totalDebit,
+                        'available_balance' => $reservation['available'],
+                        'reference'         => $reference,
+                    ];
                     continue;
                 }
 
-                $payment = Payment::create([
-                    'employee_id'   => $employee->id,
-                    'employee_name' => $employeeName,
-                    'amount'        => $netSalary,
-                    'payment_date'  => now()->toDateString(),
-                    'reference'     => $reference,
-                    'status'        => 'pending',
-                ]);
+                $totalProcessingFees += $processingFee;
+
                 try {
                     $response = Http::withToken($flutterwaveSecretKey)
                         ->acceptJson()
@@ -275,35 +332,53 @@ class PaymentController extends Controller
                             ]
                         );
                 } catch (\Throwable $e) {
-                    $payment->update([
-                        'status' => 'failed',
+                    // A timeout does NOT prove the transfer failed (the money may have left),
+                    // so keep it pending and let the webhook or reconcile command decide.
+                    Log::error('Payroll transfer request error', [
+                        'reference' => $reference,
+                        'error'     => $e->getMessage(),
                     ]);
-                    $totalFailed++;
+
+                    $totalPending++;
                     $results[] = [
-                        'employee_id' => $employee->id,
+                        'employee_id'   => $employee->id,
                         'employee_name' => $employeeName,
-                        'status'      => 'failed',
-                        'reason'      => 'Flutterwave request failed or timed out.',
-                        'reference'   => $reference,
-                        'payment_id'  => $payment->id,
-                        'error'       => $e->getMessage(),
+                        'status'        => 'pending',
+                        'reason'        => 'Could not confirm the transfer with Flutterwave. It will be confirmed automatically.',
+                        'reference'     => $reference,
+                        'payment_id'    => $payment->id,
+                    ];
+                    continue;
+                }
+
+                // Server-side error from Flutterwave: outcome unknown, keep pending
+                if ($response->status() >= 500) {
+                    Log::error('Payroll transfer 5xx', ['reference' => $reference, 'body' => $response->body()]);
+
+                    $totalPending++;
+                    $results[] = [
+                        'employee_id'   => $employee->id,
+                        'employee_name' => $employeeName,
+                        'status'        => 'pending',
+                        'reason'        => 'Flutterwave is unavailable. The payment will be confirmed automatically.',
+                        'reference'     => $reference,
+                        'payment_id'    => $payment->id,
                     ];
                     continue;
                 }
 
                 if (!$response->successful()) {
-                    $payment->update([
-                        'status' => 'failed',
-                    ]);
+                    $settler->finalize($reference, 'FAILED', 'Flutterwave rejected the request');
+                    $totalProcessingFees -= $processingFee;
                     $totalFailed++;
                     $results[] = [
-                        'employee_id' => $employee->id,
+                        'employee_id'   => $employee->id,
                         'employee_name' => $employeeName,
-                        'status'      => 'failed',
-                        'reason'      => 'Flutterwave payment request failed.',
-                        'reference'   => $reference,
-                        'payment_id'  => $payment->id,
-                        'response'    => $response->json(),
+                        'status'        => 'failed',
+                        'reason'        => 'Flutterwave payment request failed.',
+                        'reference'     => $reference,
+                        'payment_id'    => $payment->id,
+                        'response'      => $response->json(),
                     ];
                     continue;
                 }
@@ -311,141 +386,116 @@ class PaymentController extends Controller
                 $flutterwaveData = $response->json();
 
                 if (($flutterwaveData['status'] ?? null) !== 'success') {
-                    $payment->update([
-                        'status' => 'failed',
-                    ]);
+                    $settler->finalize($reference, 'FAILED', $flutterwaveData['message'] ?? null);
+                    $totalProcessingFees -= $processingFee;
                     $totalFailed++;
                     $results[] = [
-                        'employee_id' => $employee->id,
+                        'employee_id'   => $employee->id,
                         'employee_name' => $employeeName,
-                        'status'      => 'failed',
-                        'reason'      => $flutterwaveData['message']
-                            ?? 'Flutterwave payment failed.',
-                        'reference'   => $reference,
-                        'payment_id'  => $payment->id,
-                        'response'    => $flutterwaveData,
+                        'status'        => 'failed',
+                        'reason'        => $flutterwaveData['message'] ?? 'Flutterwave payment failed.',
+                        'reference'     => $reference,
+                        'payment_id'    => $payment->id,
+                        'response'      => $flutterwaveData,
                     ];
-
                     continue;
                 }
 
-                $flutterwaveStatus = strtoupper(
-                    $flutterwaveData['data']['status'] ?? ''
-                );
+                // Save Flutterwave's transfer id so the reconcile command can check it later
+                if (!empty($flutterwaveData['data']['id'])) {
+                    $payment->update(['flutterwave_transfer_id' => (string) $flutterwaveData['data']['id']]);
+                }
 
-                if (in_array($flutterwaveStatus, ['NEW', 'PENDING'])) {
+                $flutterwaveStatus = strtoupper($flutterwaveData['data']['status'] ?? '');
+
+                if (in_array($flutterwaveStatus, ['NEW', 'PENDING'], true)) {
+                    // The final result arrives by webhook (or the reconcile command)
+                    $totalPending++;
                     $results[] = [
-                        'employee_id' => $employee->id,
+                        'employee_id'   => $employee->id,
                         'employee_name' => $employeeName,
-                        'status'      => 'pending',
-                        'reason'      => 'Payment is being processed by Flutterwave.',
-                        'reference'   => $reference,
-                        'payment_id'  => $payment->id,
+                        'status'        => 'pending',
+                        'reason'        => 'Payment is being processed by Flutterwave.',
+                        'reference'     => $reference,
+                        'payment_id'    => $payment->id,
                     ];
-
                     continue;
                 }
+
                 if ($flutterwaveStatus === 'FAILED') {
-                    $payment->update([
-                        'status' => 'failed',
-                    ]);
+                    $reason = $flutterwaveData['data']['complete_message']
+                        ?? $flutterwaveData['message']
+                        ?? 'Flutterwave payment failed.';
 
+                    $settler->finalize($reference, 'FAILED', $reason);
+                    $totalProcessingFees -= $processingFee;
                     $totalFailed++;
                     $results[] = [
-                        'employee_id' => $employee->id,
+                        'employee_id'   => $employee->id,
                         'employee_name' => $employeeName,
-                        'status'      => 'failed',
-                        'reason'      => $flutterwaveData['data']['complete_message']
-                            ?? $flutterwaveData['message']
-                            ?? 'Flutterwave payment failed.',
-                        'reference'   => $reference,
-                        'payment_id'  => $payment->id,
+                        'status'        => 'failed',
+                        'reason'        => $reason,
+                        'reference'     => $reference,
+                        'payment_id'    => $payment->id,
                     ];
-
                     continue;
                 }
 
                 if ($flutterwaveStatus === 'SUCCESSFUL') {
-                    $currentBalance = $previousBalance - $netSalary;
-                    $company->balance = $currentBalance;
-                    $company->save();
-                    $payment->update([
-                        'status' => 'successful',
-                    ]);
-
-                    Transaction::create([
-                        'company_id'       => $company->id,
-                        'reference'        => $reference,
-                        'amount'           => $netSalary,
-                        'previous_balance' => $previousBalance,
-                        'current_balance'  => $currentBalance,
-                        'type'             => 'debit',
-                        'transaction_type' => 'payroll',
-                        'status'           => 'successful',
-                        'description'      => 'Payroll payment to ' . $employeeName,
-                    ]);
-
-                    if ($employee->user_id) {
-                        Notification::create([
-                            'user_id'  => $employee->user_id,
-                            'title'    => 'Salary Payment',
-                            'message'  => 'Your salary payment of ₦'
-                                . number_format($netSalary, 2)
-                                . ' has been processed successfully.',
-                            'type'     => 'payroll',
-                            'is_read'  => false,
-                        ]);
-                    }
+                    $settler->finalize($reference, 'SUCCESSFUL');
 
                     $totalPaid++;
                     $totalAmountPaid += $netSalary;
 
                     $results[] = [
-                        'employee_id'   => $employee->id,
-                        'employee_name' => $employeeName,
-                        'status'        => 'paid',
-                        'estimate_pay'  => $estimatePay,
-                        'deduction'     => $deductionAmount,
-                        'net_salary'    => $netSalary,
-                        'reference'     => $reference,
-                        'payment_id'    => $payment->id,
+                        'employee_id'    => $employee->id,
+                        'employee_name'  => $employeeName,
+                        'status'         => 'paid',
+                        'estimate_pay'   => $estimatePay,
+                        'deduction'      => $deductionAmount,
+                        'net_salary'     => $netSalary,
+                        'processing_fee' => $processingFee,
+                        'reference'      => $reference,
+                        'payment_id'     => $payment->id,
                     ];
-
                     continue;
                 }
 
-                $payment->update([
-                    'status' => 'failed',
+                // Unknown status: keep pending rather than guessing
+                Log::warning('Unknown Flutterwave transfer status', [
+                    'reference' => $reference,
+                    'status'    => $flutterwaveStatus,
                 ]);
 
-                $totalFailed++;
-
+                $totalPending++;
                 $results[] = [
-                    'employee_id' => $employee->id,
-                    'employee_name' => $employeeName,
-                    'status'      => 'failed',
-                    'reason'      => 'Unknown Flutterwave payment status.',
+                    'employee_id'        => $employee->id,
+                    'employee_name'      => $employeeName,
+                    'status'             => 'pending',
+                    'reason'             => 'Unknown Flutterwave payment status. It will be confirmed automatically.',
                     'flutterwave_status' => $flutterwaveStatus,
-                    'reference'   => $reference,
-                    'payment_id'  => $payment->id,
+                    'reference'          => $reference,
+                    'payment_id'         => $payment->id,
                 ];
             }
 
-            DB::commit();
+            $company->refresh();
 
             return response()->json([
                 'status'  => true,
                 'message' => 'Payroll processing completed.',
 
                 'summary' => [
-                    'total_employees'   => $totalEmployees,
-                    'total_paid'        => $totalPaid,
-                    'total_skipped'     => $totalSkipped,
-                    'total_failed'      => $totalFailed,
-                    'total_deductions'  => $totalDeductions,
-                    'total_amount_paid'=> $totalAmountPaid,
-                    'remaining_balance' => $company->balance,
-                    'payroll_month'     => $payrollMonth,
+                    'total_employees'       => $totalEmployees,
+                    'total_paid'            => $totalPaid,
+                    'total_pending'         => $totalPending,
+                    'total_skipped'         => $totalSkipped,
+                    'total_failed'          => $totalFailed,
+                    'total_deductions'      => $totalDeductions,
+                    'total_amount_paid'     => $totalAmountPaid,
+                    'remaining_balance'     => $company->balance,
+                    'payroll_month'         => $payrollMonth,
+                    'total_processing_fees' => $totalProcessingFees,
                 ],
 
                 'data' => $results,
@@ -453,11 +503,16 @@ class PaymentController extends Controller
 
         } catch (\Throwable $e) {
 
-            DB::rollBack();
+            // No outer rollback: some transfers may already have been sent. Each payment keeps its own record.
+            Log::error('Company payroll failed', [
+                'company_id' => $company->id,
+                'error'      => $e->getMessage(),
+                'line'       => $e->getLine(),
+            ]);
 
             return response()->json([
                 'status'  => false,
-                'message' => 'Company payroll failed.',
+                'message' => 'Company payroll failed. Some payments may already have been started, so check the payments list before retrying.',
                 'error'   => $e->getMessage(),
             ], 500);
         }

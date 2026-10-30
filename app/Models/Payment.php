@@ -15,7 +15,9 @@ class Payment extends Model
         'amount',
         'payment_date',
         'reference',
-        'status'
+        'status',
+        'processing_fee',
+        'flutterwave_transfer_id',
     ];
 
     public function employee()
