@@ -103,7 +103,6 @@ class PaymentController extends Controller
             ], 500);
         }
 
-        // Fees now come from the payment_settings table
         $settings = PaymentSetting::current();
 
         if (!$settings) {
@@ -112,6 +111,8 @@ class PaymentController extends Controller
                 'message' => 'Payment settings have not been configured. Please contact an admin.',
             ], 422);
         }
+
+        $senderName = trim((string) $company->name);
 
         try {
             $employees = Employees::where('company_id', $company->id)->get();
@@ -149,7 +150,6 @@ class PaymentController extends Controller
                     continue;
                 }
 
-                // Pending counts too, so payroll can't pay the same person twice while a transfer is in progress
                 $alreadyPaid = Payment::where('employee_id', $employee->id)
                     ->whereIn('status', ['successful', 'pending'])
                     ->whereYear('payment_date', now()->year)
@@ -237,11 +237,9 @@ class PaymentController extends Controller
                     $employee->id . '-' .
                     Str::upper(Str::random(10));
 
-                // Fee from payment_settings: VAT + Payfleet fee, plus the government fee from 10,000 up
                 $processingFee = $settings->processingFeeFor($netSalary);
                 $totalDebit    = round($netSalary + $processingFee, 2);
 
-                // Reserve the money first (lock the company row so two requests can't overspend)
                 $reservation = DB::transaction(function () use (
                     $company, $employee, $employeeName, $netSalary, $processingFee, $totalDebit, $reference
                 ) {
@@ -314,26 +312,30 @@ class PaymentController extends Controller
 
                 $totalProcessingFees += $processingFee;
 
+                $transferPayload = [
+                    'account_bank'     => $employee->bank_code,
+                    'account_number'   => $employee->account_number,
+                    'amount'           => $netSalary,
+                    'currency'         => 'NGN',
+                    'beneficiary_name' => $employeeName,
+                    'reference'        => $reference,
+                    'debit_currency'   => 'NGN',
+                    'narration'        => Str::limit('Salary - ' . ($senderName !== '' ? $senderName : 'Payfleet'), 30, ''),
+                ];
+
+                if (config('services.flutterwave.send_sender_meta') && $senderName !== '') {
+                    $transferPayload['meta'] = [[
+                        'sender'         => $senderName,
+                        'sender_country' => 'NG',
+                    ]];
+                }
+
                 try {
                     $response = Http::withToken($flutterwaveSecretKey)
                         ->acceptJson()
                         ->timeout(30)
-                        ->post(
-                            'https://api.flutterwave.com/v3/transfers',
-                            [
-                                'account_bank'     => $employee->bank_code,
-                                'account_number'   => $employee->account_number,
-                                'amount'           => $netSalary,
-                                'currency'         => 'NGN',
-                                'beneficiary_name' => $employeeName,
-                                'reference'        => $reference,
-                                'debit_currency'   => 'NGN',
-                                'narration'        => 'Salary payment',
-                            ]
-                        );
+                        ->post('https://api.flutterwave.com/v3/transfers', $transferPayload);
                 } catch (\Throwable $e) {
-                    // A timeout does NOT prove the transfer failed (the money may have left),
-                    // so keep it pending and let the webhook or reconcile command decide.
                     Log::error('Payroll transfer request error', [
                         'reference' => $reference,
                         'error'     => $e->getMessage(),
@@ -351,7 +353,6 @@ class PaymentController extends Controller
                     continue;
                 }
 
-                // Server-side error from Flutterwave: outcome unknown, keep pending
                 if ($response->status() >= 500) {
                     Log::error('Payroll transfer 5xx', ['reference' => $reference, 'body' => $response->body()]);
 
@@ -401,7 +402,6 @@ class PaymentController extends Controller
                     continue;
                 }
 
-                // Save Flutterwave's transfer id so the reconcile command can check it later
                 if (!empty($flutterwaveData['data']['id'])) {
                     $payment->update(['flutterwave_transfer_id' => (string) $flutterwaveData['data']['id']]);
                 }
@@ -409,7 +409,6 @@ class PaymentController extends Controller
                 $flutterwaveStatus = strtoupper($flutterwaveData['data']['status'] ?? '');
 
                 if (in_array($flutterwaveStatus, ['NEW', 'PENDING'], true)) {
-                    // The final result arrives by webhook (or the reconcile command)
                     $totalPending++;
                     $results[] = [
                         'employee_id'   => $employee->id,
@@ -503,7 +502,6 @@ class PaymentController extends Controller
 
         } catch (\Throwable $e) {
 
-            // No outer rollback: some transfers may already have been sent. Each payment keeps its own record.
             Log::error('Company payroll failed', [
                 'company_id' => $company->id,
                 'error'      => $e->getMessage(),
@@ -1143,6 +1141,7 @@ class PaymentController extends Controller
             'data'       => $payments
         ]);  
     }
+    
     public function retryPayrollPayment(Request $request, $paymentId): JsonResponse
     {
         $admin = $request->user();
@@ -1170,8 +1169,17 @@ class PaymentController extends Controller
             ], 500);
         }
 
-        $payment = Payment::with('employee')
-            ->find($paymentId);
+        // NEW: fees come from the payment_settings table
+        $settings = PaymentSetting::current();
+
+        if (!$settings) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Payment settings have not been configured. Please contact an admin.',
+            ], 422);
+        }
+
+        $payment = Payment::with('employee')->find($paymentId);
 
         if (!$payment) {
             return response()->json([
@@ -1188,7 +1196,6 @@ class PaymentController extends Controller
                 'message' => 'Employee attached to this payment was not found.',
             ], 404);
         }
-
 
         if ($payment->status === 'successful') {
             return response()->json([
@@ -1208,114 +1215,128 @@ class PaymentController extends Controller
             ], 403);
         }
 
-        if ( empty($employee->account_number) || empty($employee->bank_code)
-        ) {
+        if (empty($employee->account_number) || empty($employee->bank_code)) {
             return response()->json([
                 'status'  => false,
                 'message' => 'Employee bank details are incomplete.',
             ], 422);
         }
 
+        // NEW: a pending payment with no transfer id can't be confirmed, and the money may already have left
+        if ($payment->status === 'pending' && !$payment->flutterwave_transfer_id) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'This payment could not be confirmed with Flutterwave and may already have been paid. Check the Flutterwave dashboard before retrying.',
+            ], 409);
+        }
+
+        // NEW: don't pay the same employee twice for the same month
+        $paymentMonth = \Carbon\Carbon::parse($payment->payment_date);
+
+        $duplicate = Payment::where('employee_id', $employee->id)
+            ->where('id', '!=', $payment->id)
+            ->whereIn('status', ['successful', 'pending'])
+            ->whereYear('payment_date', $paymentMonth->year)
+            ->whereMonth('payment_date', $paymentMonth->month)
+            ->exists();
+
+        if ($duplicate) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'This employee already has a successful or pending payment for that month.',
+            ], 409);
+        }
+
+        $settler = app(PayrollTransferSettler::class);
+
+        // Check the previous transfer first, so we never pay twice
         if ($payment->flutterwave_transfer_id) {
             try {
                 $statusResponse = Http::withToken($flutterwaveSecretKey)
                     ->acceptJson()
                     ->timeout(30)
-                    ->get(
-                        'https://api.flutterwave.com/v3/transfers/'
-                        . $payment->flutterwave_transfer_id
-                    );
-
-                if ($statusResponse->successful()) {
-                    $transfer = $statusResponse->json();
-                    $transferData = $transfer['data'] ?? [];
-                    $transferStatus = strtoupper(
-                        $transferData['status'] ?? ''
-                    );
-
-                    if ($transferStatus === 'SUCCESSFUL') {
-                        DB::beginTransaction();
-                        try {
-                            if ($payment->status !== 'successful') {
-                                $previousBalance = (float) $company->balance;
-                                $amount = (float) $payment->amount;
-                                $company->balance =
-                                    $previousBalance - $amount;
-                                $company->save();
-                                $payment->update([
-                                    'status' => 'successful',
-                                ]);
-
-                                Transaction::firstOrCreate(
-                                    ['reference' => $payment->reference,],
-                                    [
-                                        'company_id'       => $company->id,
-                                        'amount'           => $amount,
-                                        'previous_balance' => $previousBalance,
-                                        'current_balance'  => $company->balance,
-                                        'type'             => 'debit',
-                                        'transaction_type' => 'payroll',
-                                        'status'           => 'successful',
-                                        'description'      =>
-                                            'Payroll payment to '
-                                            . $payment->employee_name,
-                                    ]
-                                );
-                            }
-
-                            DB::commit();
-                        } catch (\Throwable $e) {
-                            DB::rollBack();
-                            return response()->json([
-                                'status'  => false,
-                                'message' => 'Payment was successful on Flutterwave, but local update failed.',
-                                'error'   => $e->getMessage(),
-                            ], 500);
-                        }
-
-                        return response()->json([
-                            'status'  => true,
-                            'message' => 'Flutterwave confirms this payment was already successful. No new payment was created.',
-                            'payment' => $payment->fresh(),
-                        ], 200);
-                    }
-
-                    if (in_array($transferStatus, ['NEW', 'PENDING'])) {
-                        return response()->json([
-                            'status'  => false,
-                            'message' => 'This payment is still being processed by Flutterwave. Do not retry it yet.',
-                            'transfer_status' => $transferStatus,
-                            'transfer_id' => $payment->flutterwave_transfer_id,
-                        ], 409);
-                    }
-
-                    if ($transferStatus === 'FAILED') {
-                        $payment->update([
-                            'status' => 'failed',
-                        ]);
-                    }
-                }
-
+                    ->get('https://api.flutterwave.com/v3/transfers/' . $payment->flutterwave_transfer_id);
             } catch (\Throwable $e) {
-
                 return response()->json([
                     'status'  => false,
                     'message' => 'Could not verify the previous Flutterwave transfer. Payment was not retried to prevent duplicate payment.',
                     'error'   => $e->getMessage(),
                 ], 503);
             }
+
+            // CHANGED: if we can't verify the old transfer, stop (the old code carried on and could pay twice)
+            if (!$statusResponse->successful()) {
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Could not verify the previous Flutterwave transfer. Payment was not retried to prevent duplicate payment.',
+                ], 503);
+            }
+
+            $transferData   = $statusResponse->json('data') ?? [];
+            $transferStatus = strtoupper($transferData['status'] ?? '');
+
+            if ($transferStatus === 'SUCCESSFUL') {
+                if ($payment->status === 'pending') {
+                    try {
+                        // The money was already reserved, so this just confirms it
+                        $settler->finalize($payment->reference, 'SUCCESSFUL');
+                    } catch (\Throwable $e) {
+                        return response()->json([
+                            'status'  => false,
+                            'message' => 'Payment was successful on Flutterwave, but local update failed.',
+                            'error'   => $e->getMessage(),
+                        ], 500);
+                    }
+
+                    return response()->json([
+                        'status'  => true,
+                        'message' => 'Flutterwave confirms this payment was already successful. No new payment was created.',
+                        'payment' => $payment->fresh(),
+                    ], 200);
+                }
+
+                // Marked failed here, but Flutterwave says it went through
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Flutterwave reports this transfer as successful although it is marked failed here. Do not retry. Please contact support.',
+                    'transfer_id' => $payment->flutterwave_transfer_id,
+                ], 409);
+            }
+
+            if (in_array($transferStatus, ['NEW', 'PENDING'], true)) {
+                return response()->json([
+                    'status'          => false,
+                    'message'         => 'This payment is still being processed by Flutterwave. Do not retry it yet.',
+                    'transfer_status' => $transferStatus,
+                    'transfer_id'     => $payment->flutterwave_transfer_id,
+                ], 409);
+            }
+
+            if ($transferStatus === 'FAILED') {
+                if ($payment->status === 'pending') {
+                    // Refunds the reserved money and marks the payment failed
+                    $settler->finalize(
+                        $payment->reference,
+                        'FAILED',
+                        $transferData['complete_message'] ?? null
+                    );
+                }
+
+                $payment->refresh();
+            } else {
+                return response()->json([
+                    'status'          => false,
+                    'message'         => 'Unknown status from Flutterwave for the previous transfer. Payment was not retried.',
+                    'transfer_status' => $transferStatus,
+                ], 409);
+            }
         }
 
         $amount = (float) $payment->amount;
 
-        if ((float) $company->balance < $amount) {
-            return response()->json([
-                'status'  => false,
-                'message' => 'Insufficient company balance.',
-                'required' => $amount,
-                'balance' => (float) $company->balance,
-            ], 422);
-        }
+        // NEW: fee from payment_settings
+        $processingFee = $settings->processingFeeFor($amount);
+        $totalDebit    = round($amount + $processingFee, 2);
 
         $retryReference = 'PAYROLL-RETRY-' .
             $company->id . '-' .
@@ -1332,10 +1353,55 @@ class PaymentController extends Controller
         }
 
         $employeeName = $employeeName ?: 'Employee';
-        $payment->update([
-            'status'    => 'pending',
-            'reference' => $retryReference,
-        ]);
+
+        // CHANGED: reserve salary + fee first (company row locked), same as trigerPayroll
+        $reservation = DB::transaction(function () use (
+            $company, $payment, $employeeName, $processingFee, $totalDebit, $amount, $retryReference
+        ) {
+            $lockedCompany   = Company::where('id', $company->id)->lockForUpdate()->first();
+            $previousBalance = (float) $lockedCompany->balance;
+
+            if ($previousBalance < $totalDebit) {
+                return ['reserved' => false, 'available' => $previousBalance];
+            }
+
+            $currentBalance = round($previousBalance - $totalDebit, 2);
+
+            $lockedCompany->balance = $currentBalance;
+            $lockedCompany->save();
+
+            $payment->update([
+                'status'                  => 'pending',
+                'reference'               => $retryReference,
+                'processing_fee'          => $processingFee,
+                'flutterwave_transfer_id' => null,
+            ]);
+
+            Transaction::create([
+                'company_id'       => $company->id,
+                'reference'        => $retryReference,
+                'amount'           => $totalDebit,
+                'previous_balance' => $previousBalance,
+                'current_balance'  => $currentBalance,
+                'type'             => 'debit',
+                'transaction_type' => 'payroll',
+                'status'           => 'pending',
+                'description'      => 'Payroll retry payment to ' . $employeeName
+                    . ' (Salary: ₦' . number_format($amount, 2)
+                    . ', Processing fee: ₦' . number_format($processingFee, 2) . ')',
+            ]);
+
+            return ['reserved' => true];
+        });
+
+        if (!$reservation['reserved']) {
+            return response()->json([
+                'status'   => false,
+                'message'  => 'Insufficient company balance.',
+                'required' => $totalDebit,
+                'balance'  => $reservation['available'],
+            ], 422);
+        }
 
         try {
             $response = Http::withToken($flutterwaveSecretKey)
@@ -1355,113 +1421,133 @@ class PaymentController extends Controller
                     ]
                 );
         } catch (\Throwable $e) {
-            $payment->update([
-                'status' => 'pending',
+            // A timeout doesn't prove the transfer failed. Stay pending, the money stays reserved.
+            Log::error('Payroll retry request error', [
+                'reference' => $retryReference,
+                'error'     => $e->getMessage(),
             ]);
 
             return response()->json([
-                'status'  => false,
-                'message' => 'Flutterwave could not be reached. Payment remains pending and was not marked as failed.',
+                'status'     => false,
+                'message'    => 'Flutterwave could not be reached. Payment remains pending and was not marked as failed.',
                 'payment_id' => $payment->id,
-                'reference' => $retryReference,
+                'reference'  => $retryReference,
+            ], 503);
+        }
+
+        // Server error from Flutterwave: outcome unknown, stay pending
+        if ($response->status() >= 500) {
+            Log::error('Payroll retry 5xx', ['reference' => $retryReference, 'body' => $response->body()]);
+
+            return response()->json([
+                'status'     => false,
+                'message'    => 'Flutterwave is unavailable. Payment remains pending and will be confirmed automatically.',
+                'payment_id' => $payment->id,
+                'reference'  => $retryReference,
             ], 503);
         }
 
         if (!$response->successful()) {
-            $payment->update([
-                'status' => 'failed',
-            ]);
+            // Refunds the reserved money and marks the payment failed
+            $settler->finalize($retryReference, 'FAILED', 'Flutterwave rejected the request');
 
             return response()->json([
-                'status'  => false,
-                'message' => 'Retry payment request failed.',
+                'status'     => false,
+                'message'    => 'Retry payment request failed.',
                 'payment_id' => $payment->id,
-                'reference' => $retryReference,
-                'response' => $response->json(),
+                'reference'  => $retryReference,
+                'response'   => $response->json(),
             ], 422);
         }
 
         $flutterwaveData = $response->json();
-        $transferId = $flutterwaveData['data']['id'] ?? null;
-        $transferStatus = strtoupper(
-            $flutterwaveData['data']['status'] ?? ''
-        );
 
-        $payment->update([
-            'flutterwave_transfer_id' => $transferId,
-        ]);
+        if (($flutterwaveData['status'] ?? null) !== 'success') {
+            $settler->finalize($retryReference, 'FAILED', $flutterwaveData['message'] ?? null);
+
+            return response()->json([
+                'status'     => false,
+                'message'    => $flutterwaveData['message'] ?? 'Payment retry failed.',
+                'payment_id' => $payment->id,
+                'reference'  => $retryReference,
+                'response'   => $flutterwaveData,
+            ], 422);
+        }
+
+        $transferId     = $flutterwaveData['data']['id'] ?? null;
+        $transferStatus = strtoupper($flutterwaveData['data']['status'] ?? '');
+
+        if ($transferId) {
+            $payment->update(['flutterwave_transfer_id' => (string) $transferId]);
+        }
 
         if ($transferStatus === 'SUCCESSFUL') {
-            DB::beginTransaction();
             try {
-                $previousBalance = (float) $company->balance;
-                $currentBalance = $previousBalance - $amount;
-                $company->balance = $currentBalance;
-                $company->save();
-                $payment->update([
-                    'status' => 'successful',
-                ]);
-
-                Transaction::create([
-                    'company_id'       => $company->id,
-                    'reference'        => $retryReference,
-                    'amount'           => $amount,
-                    'previous_balance' => $previousBalance,
-                    'current_balance'  => $currentBalance,
-                    'type'             => 'debit',
-                    'transaction_type' => 'payroll',
-                    'status'           => 'successful',
-                    'description'      => 'Payroll retry payment to '
-                        . $employeeName,
-                ]);
-
-                DB::commit();
-
+                $settler->finalize($retryReference, 'SUCCESSFUL');
             } catch (\Throwable $e) {
-                DB::rollBack();
                 return response()->json([
-                    'status'  => false,
-                    'message' => 'Flutterwave payment succeeded, but local payment update failed.',
-                    'error'   => $e->getMessage(),
+                    'status'      => false,
+                    'message'     => 'Flutterwave payment succeeded, but local payment update failed.',
+                    'error'       => $e->getMessage(),
                     'transfer_id' => $transferId,
                 ], 500);
             }
 
             return response()->json([
-                'status'  => true,
-                'message' => 'Payment retry was successful.',
-                'payment_id' => $payment->id,
-                'reference' => $retryReference,
-                'transfer_id' => $transferId,
-                'status' => 'successful',
+                'status'         => true,
+                'message'        => 'Payment retry was successful.',
+                'payment_id'     => $payment->id,
+                'reference'      => $retryReference,
+                'transfer_id'    => $transferId,
+                'processing_fee' => $processingFee,
+                'payment_status' => 'successful',
             ], 200);
         }
 
-        if (in_array($transferStatus, ['NEW', 'PENDING'])) {
+        if (in_array($transferStatus, ['NEW', 'PENDING'], true)) {
+            // The final result arrives by webhook or the reconcile command
             return response()->json([
-                'status'  => true,
-                'message' => 'Payment retry was accepted by Flutterwave and is currently processing.',
-                'payment_id' => $payment->id,
-                'reference' => $retryReference,
-                'transfer_id' => $transferId,
-                'status' => 'pending',
+                'status'         => true,
+                'message'        => 'Payment retry was accepted by Flutterwave and is currently processing.',
+                'payment_id'     => $payment->id,
+                'reference'      => $retryReference,
+                'transfer_id'    => $transferId,
+                'processing_fee' => $processingFee,
+                'payment_status' => 'pending',
             ], 202);
         }
 
-        $payment->update([
-            'status' => 'failed',
+        if ($transferStatus === 'FAILED') {
+            $reason = $flutterwaveData['data']['complete_message']
+                ?? $flutterwaveData['message']
+                ?? 'Payment retry failed.';
+
+            $settler->finalize($retryReference, 'FAILED', $reason);
+
+            return response()->json([
+                'status'         => false,
+                'message'        => $reason,
+                'payment_id'     => $payment->id,
+                'reference'      => $retryReference,
+                'transfer_id'    => $transferId,
+                'payment_status' => 'failed',
+            ], 422);
+        }
+
+        // Unknown status: keep pending rather than guessing
+        Log::warning('Unknown Flutterwave status on retry', [
+            'reference' => $retryReference,
+            'status'    => $transferStatus,
         ]);
 
         return response()->json([
-            'status'  => false,
-            'message' => $flutterwaveData['data']['complete_message']
-                ?? $flutterwaveData['message']
-                ?? 'Payment retry failed.',
-            'payment_id' => $payment->id,
-            'reference' => $retryReference,
-            'transfer_id' => $transferId,
-            'status' => 'failed',
-        ], 422);
+            'status'         => true,
+            'message'        => 'Payment retry was accepted, but Flutterwave returned an unknown status. It will be confirmed automatically.',
+            'payment_id'     => $payment->id,
+            'reference'      => $retryReference,
+            'transfer_id'    => $transferId,
+            'payment_status' => 'pending',
+        ], 202);
     }
 }
  

@@ -52,6 +52,7 @@ return [
         'secret_hash'   =>  env('FLW_SECRET_HASH'),
         'base_url'      =>  env('FLW_BASE_URL'),
         'currency'      =>  env('FLW_CURRENCY'),
+        'send_sender_meta' => env('FLUTTERWAVE_SEND_SENDER_META', false),
     ],
 
     'moniepoint' => [
