@@ -44,7 +44,7 @@ jobs:
       - name: Write .env file
         run: |
           cat > .env << 'EOF'
-          ${{ secrets.LARAVEL_PROD_ENV_FILE }}
+          ${{ secrets.LARAVEL_PROD_ENV_FILE || secrets.LARAVEL_ENV_FILE }}
           EOF
 
       - name: Upload .env to server
@@ -78,12 +78,13 @@ jobs:
 
             if [ ! -d ".git" ]; then
               echo "Initializing Git repository in $APP_DIR..."
-              git init -b main
+              git init -b production
               git remote add origin https://github.com/${{ github.repository }}.git || git remote set-url origin https://github.com/${{ github.repository }}.git
             fi
 
             git fetch --all
-            git reset --hard origin/main
+            git checkout -B production origin/production
+            git reset --hard origin/production
             chmod 600 "$APP_DIR/.env"
 
             composer install --no-dev --optimize-autoloader

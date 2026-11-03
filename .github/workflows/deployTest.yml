@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - main
-    branches-ignore:
-      - demo
-      - production
 
 jobs:
   deploy:
@@ -55,6 +52,7 @@ jobs:
             fi
 
             git fetch --all
+            git checkout -B main origin/main
             git reset --hard origin/main
             chmod 600 "$APP_DIR/.env"
 

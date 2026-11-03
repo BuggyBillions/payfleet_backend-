@@ -1,3 +1,8 @@
+[![.github/workflows/deployTest.yml](https://github.com/BuggyBillions/payfleet_backend-/actions/workflows/deployTest.yml/badge.svg)](https://github.com/BuggyBillions/payfleet_backend-/actions/workflows/deployTest.yml)
+[![.github/workflows/deployDemo.yml](https://github.com/BuggyBillions/payfleet_backend-/actions/workflows/deployDemo.yml/badge.svg)](https://github.com/BuggyBillions/payfleet_backend-/actions/workflows/deployDemo.yml)
+[![Production Deploy Laravel API](https://github.com/BuggyBillions/payfleet_backend-/actions/workflows/deployProduction.yml/badge.svg)](https://github.com/BuggyBillions/payfleet_backend-/actions/workflows/deployProduction.yml)
+[![Validate Production PR](https://github.com/BuggyBillions/payfleet_backend-/actions/workflows/validate-production-pr.yml/badge.svg)](https://github.com/BuggyBillions/payfleet_backend-/actions/workflows/validate-production-pr.yml)
+
 <p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
 
 <p align="center">
