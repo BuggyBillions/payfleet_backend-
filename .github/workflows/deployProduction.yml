@@ -69,7 +69,7 @@ jobs:
             set -e
             BASE_DIR=~/domains/payfleet.com.ng/public_html
             APP_DIR="$BASE_DIR/apiProdLaravel"
-            WEB_DIR="$BASE_DIR/apiProd"
+            WEB_DIR="$BASE_DIR/apiprod"
 
             mkdir -p "$APP_DIR"
             cd "$APP_DIR"
