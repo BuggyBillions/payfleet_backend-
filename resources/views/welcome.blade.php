@@ -42,9 +42,6 @@
                 </div>
 
                 <div class="mt-8 text-center">
-                    <span style="display: inline-block; padding: 5px 14px; border-radius: 9999px; font-size: 12px; font-weight: 800; background-color: #fef3c7; color: #92400e; border: 1px solid #fcd34d; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 12px;">
-                        DEMO MODE
-                    </span>
                     <h1 class="text-3xl font-extrabold text-gray-900 dark:text-white sm:text-4xl">
                         Payfleet API <span style="color: #2a5d56;">(Demo)</span>
                     </h1>
