@@ -48,10 +48,12 @@ jobs:
             if [ ! -d ".git" ]; then
               echo "Initializing Git repository in $APP_DIR..."
               git init -b main
-              git remote add origin https://github.com/${{ github.repository }}.git || git remote set-url origin https://github.com/${{ github.repository }}.git
             fi
 
-            git fetch --all
+            git remote set-url origin https://github.com/${{ github.repository }}.git 2>/dev/null || git remote add origin https://github.com/${{ github.repository }}.git
+
+            export GIT_TERMINAL_PROMPT=0
+            git fetch origin main
             git checkout -B main origin/main
             git reset --hard origin/main
             chmod 600 "$APP_DIR/.env"
