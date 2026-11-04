@@ -1,9 +1,9 @@
-name: Deploy Laravel API
+name: Demo Deploy Laravel API
 
 on:
   push:
     branches:
-      - main
+      - demo
 
 jobs:
   deploy:
@@ -13,7 +13,7 @@ jobs:
       - name: Write .env file
         run: |
           cat > .env << 'EOF'
-          ${{ secrets.LARAVEL_ENV_FILE }}
+          ${{ secrets.LARAVEL_DEMO_ENV_FILE || secrets.LARAVEL__DEMO_ENV_FILE || secrets.LARAVEL_ENV_FILE }}
           EOF
 
       - name: Upload .env to server
@@ -24,7 +24,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SERVER_PORT }}
           source: ".env"
-          target: "~/domains/payfleet.com.ng/public_html/apitestLaravel"
+          target: "~/domains/payfleet.com.ng/public_html/apiDemoLaravel"
           strip_components: 0
 
       - name: SSH Deploy
@@ -37,8 +37,8 @@ jobs:
           script: |
             set -e
             BASE_DIR=~/domains/payfleet.com.ng/public_html
-            APP_DIR="$BASE_DIR/apitestLaravel"
-            WEB_DIR="$BASE_DIR/api"
+            APP_DIR="$BASE_DIR/apiDemoLaravel"
+            WEB_DIR="$BASE_DIR/demo"
 
             mkdir -p "$APP_DIR"
             cd "$APP_DIR"
@@ -47,12 +47,15 @@ jobs:
 
             if [ ! -d ".git" ]; then
               echo "Initializing Git repository in $APP_DIR..."
-              git init -b main
-              git remote add origin https://github.com/${{ github.repository }}.git || git remote set-url origin https://github.com/${{ github.repository }}.git
+              git init -b demo
             fi
 
-            git fetch --all
-            git reset --hard origin/main
+            git remote set-url origin https://github.com/${{ github.repository }}.git 2>/dev/null || git remote add origin https://github.com/${{ github.repository }}.git
+
+            export GIT_TERMINAL_PROMPT=0
+            git fetch origin demo
+            git checkout -B demo origin/demo
+            git reset --hard origin/demo
             chmod 600 "$APP_DIR/.env"
 
             composer install --no-dev --optimize-autoloader
@@ -89,13 +92,13 @@ jobs:
 
             define('LARAVEL_START', microtime(true));
 
-            if (file_exists($maintenance = __DIR__.'/../apitestLaravel/storage/framework/maintenance.php')) {
+            if (file_exists($maintenance = __DIR__.'/../apiDemoLaravel/storage/framework/maintenance.php')) {
                 require $maintenance;
             }
 
-            require __DIR__.'/../apitestLaravel/vendor/autoload.php';
+            require __DIR__.'/../apiDemoLaravel/vendor/autoload.php';
 
-            $app = require_once __DIR__.'/../apitestLaravel/bootstrap/app.php';
+            $app = require_once __DIR__.'/../apiDemoLaravel/bootstrap/app.php';
 
             $kernel = $app->make(Kernel::class);
 
