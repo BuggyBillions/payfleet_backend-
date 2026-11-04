@@ -1,0 +1,24 @@
+
+name: Validate Production PR
+
+on:
+  pull_request:
+    branches:
+      - production
+
+jobs:
+  validate-source:
+    name: validate-source
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check source branch
+        env:
+          SOURCE_BRANCH: ${{ github.head_ref }}
+        run: |
+          if [ "$SOURCE_BRANCH" != "main" ]; then
+            echo "::error::Only PRs from main to production are allowed."
+            exit 1
+          fi
+
+          echo "Valid PR source branch."
