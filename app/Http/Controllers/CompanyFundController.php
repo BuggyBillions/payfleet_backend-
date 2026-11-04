@@ -47,98 +47,8 @@ class CompanyFundController extends Controller
             )
         );
     }
-
-    // public function Deposit(Request $request)
-    // {
-    //     $user = $request->user();
-
-    //     if (!$user) {
-    //         return response()->json([
-    //             'status'  => false,
-    //             'message' => 'Unauthenticated.'
-    //         ], 401);
-    //     }
-
-    //     if (!$this->isFullCompany($user)) {
-    //         return response()->json([
-    //             'status'  => false,
-    //             'message' => 'Only Company can fund account'
-    //         ], 403);
-    //     }
-
-    //     $validated = $request->validate([
-    //         'amount'     => ['required', 'numeric', 'min:1'],
-    //         'company_id' => ['required', 'exists:companies,id'],
-    //     ]);
-
-    //     $company = Company::where('id', $validated['company_id'])
-    //         ->where('user_id', $user->id)
-    //         ->first();
-
-    //     if (!$company) {
-    //         return response()->json([
-    //             'status'  => false,
-    //             'message' => 'Company not found.'
-    //         ], 404);
-    //     }
-
-    //     $depositFee = (float) config('services.moniepoint.deposit_fee', 100);
-
-    //     DB::beginTransaction();
-    //     try {
-    //         $currentBalance = (float) $company->balance;
-
-    //         $transaction = Transaction::create([
-    //             'company_id'       => $company->id,
-    //             'reference'        => 'PAY-DEP-' . strtoupper(Str::random(15)),
-    //             'amount'           => $validated['amount'],
-    //             'previous_balance' => $currentBalance,
-    //             'current_balance'  => $currentBalance,
-    //             'type'             => 'CREDIT',
-    //             'transaction_type' => 'deposit',
-    //             'status'           => 'pending',
-    //             'description'      => 'Company deposit'
-    //         ]);
-
-    //         Deposit::create([
-    //             'amount'         => $validated['amount'],
-    //             'company_id'     => $company->id,
-    //             'transaction_id' => $transaction->id,
-    //         ]);
-
-    //         ActivityLog::create([
-    //             'user_id' => $user->id,
-    //             'action'  => 'Company funding',
-    //             'details' => 'Company initiated a deposit, awaiting confirmation.',
-    //             'type'    => 'Deposit'
-    //         ]);
-
-    //         Notification::create([
-    //             'user_id' => $user->id,
-    //             'title'   => 'Company Deposit',
-    //             'message' => 'Company account deposited, awaiting approval.',
-    //             'type'    => 'Deposit'
-    //         ]);
-
-    //         DB::commit();
-
-    //         return response()->json([
-    //             'status'          => true,
-    //             'message'         => 'Deposit initiated, awaiting payment confirmation.',
-    //             'data'            => $transaction,
-    //             'checkout_amount' => (float) $validated['amount'] + $depositFee,
-    //             'reference'       => $transaction->reference,
-    //         ]);
-    //     } catch (\Exception $e) {
-    //         DB::rollBack();
-    //         return response()->json([
-    //             'status'  => false,
-    //             'message' => 'Company deposit failed.',
-    //             'error'   => $e->getMessage()
-    //         ], 500);
-    //     }
-    // }
-    public function Deposit(Request $request, MoniepointService $moniepoint)
+    
+    public function Deposit(Request $request)
     {
         $user = $request->user();
 
@@ -151,9 +61,8 @@ class CompanyFundController extends Controller
         }
 
         $validated = $request->validate([
-            'amount'          => ['required', 'numeric', 'min:1', 'regex:/^\d+(\.\d{1,2})?$/'],
-            'company_id'      => ['required', 'exists:companies,id'],
-            'terminal_serial' => ['nullable', 'string', 'max:50'],
+            'amount'     => ['required', 'numeric', 'min:1', 'max:1000000000', 'regex:/^\d+(\.\d{1,2})?$/'],
+            'company_id' => ['required', 'exists:companies,id'],
         ]);
 
         $company = Company::where('id', $validated['company_id'])
@@ -164,80 +73,65 @@ class CompanyFundController extends Controller
             return response()->json(['status' => false, 'message' => 'Company not found.'], 404);
         }
 
-        $terminalSerial = $validated['terminal_serial'] ?? config('services.moniepoint.terminal_serial');
+        $amount = round((float) $validated['amount'], 2);
 
-        if (!$terminalSerial) {
-            return response()->json(['status' => false, 'message' => 'No terminal configured.'], 422);
-        }
-
-        $depositFee    = (float) config('services.moniepoint.deposit_fee', 100);
-        $amount        = round((float) $validated['amount'], 2);
-        $checkoutTotal = round($amount + $depositFee, 2);
-
-        // 1. Create the pending records
         try {
             $transaction = DB::transaction(function () use ($company, $user, $amount) {
-                $currentBalance = (float) $company->balance;
-                $reference = 'PAYDEP' . strtoupper(Str::random(15));
+                // Lock the row so rapid taps can't produce a wrong balance
+                $locked   = Company::where('id', $company->id)->lockForUpdate()->first();
+                $previous = (float) $locked->balance;
+                $new      = round($previous + $amount, 2);
+
+                $locked->balance = $new;
+                $locked->save();
+
                 $transaction = Transaction::create([
-                    'company_id'       => $company->id,
-                    'reference'        => $reference,
+                    'company_id'       => $locked->id,
+                    'reference'        => 'PAYDEP' . strtoupper(Str::random(15)),
                     'amount'           => $amount,
-                    'previous_balance' => $currentBalance,
-                    'current_balance'  => $currentBalance,
+                    'previous_balance' => $previous,
+                    'current_balance'  => $new,
                     'type'             => 'CREDIT',
                     'transaction_type' => 'deposit',
-                    'status'           => 'pending',
-                    'moniepoint_reference' => $reference,
+                    'status'           => 'successful',
                     'description'      => 'Company deposit',
                 ]);
 
                 Deposit::create([
                     'amount'         => $amount,
-                    'company_id'     => $company->id,
+                    'company_id'     => $locked->id,
                     'transaction_id' => $transaction->id,
                 ]);
 
                 ActivityLog::create([
                     'user_id' => $user->id,
                     'action'  => 'Company funding',
-                    'details' => 'Company initiated a deposit, awaiting payment.',
+                    'details' => 'Deposit of ₦' . number_format($amount, 2) . ' confirmed.',
+                    'type'    => 'Deposit',
+                ]);
+
+                Notification::create([
+                    'user_id' => $user->id,
+                    'title'   => 'Deposit Successful',
+                    'message' => 'Your account has been credited with ₦' . number_format($amount, 2) . '.',
                     'type'    => 'Deposit',
                 ]);
 
                 return $transaction;
             });
         } catch (\Throwable $e) {
-            Log::error('Deposit creation failed', ['error' => $e->getMessage()]);
+            Log::error('Deposit failed', ['error' => $e->getMessage()]);
 
             return response()->json(['status' => false, 'message' => 'Company deposit failed.'], 500);
         }
 
-        // 2. Push to the terminal AFTER the commit, with our reference as merchantReference
-        try {
-            $moniepoint->pushToTerminal($terminalSerial, $checkoutTotal, $transaction->reference);
-        } catch (\Throwable $e) {
-            // $transaction->update(['status' => 'failed']);
-
-            return response()->json([
-                'status'  => false,
-                'message' => 'Could not send the payment request to the terminal. Please try again.',
-            ], 502);
-        }
-
-        Notification::create([
-            'user_id' => $user->id,
-            'title'   => 'Company Deposit',
-            'message' => 'Payment request sent to your terminal. Complete it to fund your account.',
-            'type'    => 'Deposit',
-        ]);
-
         return response()->json([
             'status'          => true,
-            'message'         => 'Payment request sent to terminal. Complete the payment on the device.',
+            'message'         => 'Deposit successful.',
             'data'            => $transaction,
-            'checkout_amount' => $checkoutTotal,
+            'checkout_amount' => $amount,
             'reference'       => $transaction->reference,
+            'balance'         => (float) $transaction->current_balance,
         ]);
     }
 

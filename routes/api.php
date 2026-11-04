@@ -5,6 +5,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\CompanyFundController;
 use App\Http\Controllers\CompanyProfileController;
+use App\Http\Controllers\DownloadController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\LeadController;
 use App\Http\Controllers\PaymentController;
@@ -161,3 +162,7 @@ Route::middleware('auth:sanctum')->prefix('payment-settings')->group(function ()
     Route::put('/', [PaymentSettingController::class, 'update']);   // edit afterwards
 });
 Route::post('/webhooks/flutterwave', [\App\Http\Controllers\FlutterwaveWebhookController::class, 'handle']);
+Route::middleware('auth:sanctum')->get('/payroll/preview', [PaymentController::class, 'payrollPreview']);
+Route::middleware('auth:sanctum')->prefix('payments')->group(function () {
+    Route::get('/download', [DownloadController::class, 'exportPayments']);
+});
