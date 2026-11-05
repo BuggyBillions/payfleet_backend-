@@ -135,5 +135,19 @@ class PayrollTransferSettler
 
             return ['ok' => true, 'message' => 'Payment marked successful.'];
         });
+        // if (!empty($result['notify_payment_id'])) {
+        //     try {
+        //         app(DeductionNotifier::class)->send((int) $result['notify_payment_id']);
+        //     } catch (\Throwable $e) {
+        //         Log::error('Deduction notifier failed', [
+        //             'reference' => $reference,
+        //             'error'     => $e->getMessage(),
+        //         ]);
+        //     }
+
+        //     unset($result['notify_payment_id']);
+        // }
+
+        // return $result;
     }
 }

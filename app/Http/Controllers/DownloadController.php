@@ -2,33 +2,40 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\User;
-use PhpParser\Node\Stmt\Return_;
-use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Str;
-use Carbon\Carbon;
 use App\Models\Company;
-use App\Models\Employees;
-use App\Models\Deduction;
-use App\Models\Notification;
 use App\Models\Payment;
-use App\Models\Transaction;
-use Illuminate\Support\Facades\Hash;
-use App\Models\PaymentSetting;
-use App\Services\PayrollTransferSettler;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use PhpOffice\PhpSpreadsheet\Spreadsheet;
-use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-use PhpOffice\PhpSpreadsheet\Style\Alignment;
-use PhpOffice\PhpSpreadsheet\Style\Border;
-use PhpOffice\PhpSpreadsheet\Style\Fill;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 
 class DownloadController extends Controller
 {
+    /**
+     * Table headers for the payment export.
+     */
+    public const PAYMENT_HEADERS = [
+        'S/N',
+        'Employee Name',
+        'Email',
+        'Phone Number',
+        'Job Title',
+        'Amount',
+        'Payment Status',
+        'Payment Reference',
+        'Payment Date',
+        'Bank Name',
+        'Account Name',
+        'Account Number',
+    ];
+
+    /**
+     * Export company salary payments. Saves the file and returns its download URL.
+     *
+     * Query params: month (Y-m), date_from, date_to, status, format (xls|xlsx|excel|csv),
+     * download=true (returns the file itself instead of JSON).
+     */
     public function exportPayments(Request $request)
     {
         @ini_set('memory_limit', '512M');
@@ -41,8 +48,9 @@ class DownloadController extends Controller
 
             if (!$user) {
                 return response()->json([
-                    'status' => false,
-                    'message' => 'Unauthenticated.'
+                    'success' => false,
+                    'status'  => false,
+                    'message' => 'Unauthenticated.',
                 ], 401);
             }
 
@@ -51,62 +59,62 @@ class DownloadController extends Controller
 
             if (!$company) {
                 return response()->json([
-                    'status' => false,
-                    'message' => 'Company account not found.'
+                    'success' => false,
+                    'status'  => false,
+                    'message' => 'Company account not found.',
                 ], 404);
             }
 
             // 3. Validate request
             $validator = Validator::make($request->all(), [
-                'month' => 'nullable|date_format:Y-m',
+                'month'     => 'nullable|date_format:Y-m',
                 'date_from' => 'nullable|date_format:Y-m-d',
-                'date_to' => 'nullable|date_format:Y-m-d',
-                'status' => 'nullable|in:all,pending,successful,failed,cancelled',
-                'format' => 'nullable|in:xlsx,excel,csv',
+                'date_to'   => 'nullable|date_format:Y-m-d',
+                'status'    => 'nullable|in:all,pending,successful,failed,cancelled',
+                'format'    => 'nullable|in:xlsx,excel,xls,csv',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
-                    'status' => false,
+                    'success' => false,
+                    'status'  => false,
                     'message' => 'Validation failed.',
-                    'errors' => $validator->errors()
+                    'errors'  => $validator->errors(),
                 ], 422);
             }
 
-            $month = $request->input('month');
+            $month    = $request->input('month');
             $dateFrom = $request->input('date_from');
-            $dateTo = $request->input('date_to');
-            $status = $request->input('status', 'all');
-            $format = $request->input('format', 'xlsx');
+            $dateTo   = $request->input('date_to');
+            $status   = $request->input('status', 'all');
+            $rawFormat = strtolower((string) $request->input('format', 'xls'));
 
-            // Validate date range
             if ($dateFrom && $dateTo && $dateFrom > $dateTo) {
                 return response()->json([
-                    'status' => false,
-                    'message' => 'date_from cannot be greater than date_to.'
+                    'success' => false,
+                    'status'  => false,
+                    'message' => 'date_from cannot be greater than date_to.',
                 ], 422);
             }
 
             // 4. Build payment query
             $query = Payment::query()
                 ->with([
-                    'employee:id,company_id,first_name,last_name,email,phone,job_title,bank_name,account_name,account_number'
+                    'employee:id,company_id,first_name,last_name,email,phone,job_title,bank_name,account_name,account_number',
                 ])
                 ->whereHas('employee', function ($q) use ($company) {
                     $q->where('company_id', $company->id);
                 });
 
-            // Filter by selected month
             if ($month) {
                 $monthDate = Carbon::createFromFormat('Y-m', $month);
 
                 $query->whereBetween('payment_date', [
                     $monthDate->copy()->startOfMonth()->toDateString(),
-                    $monthDate->copy()->endOfMonth()->toDateString()
+                    $monthDate->copy()->endOfMonth()->toDateString(),
                 ]);
             }
 
-            // Filter by date range
             if ($dateFrom) {
                 $query->whereDate('payment_date', '>=', $dateFrom);
             }
@@ -115,7 +123,6 @@ class DownloadController extends Controller
                 $query->whereDate('payment_date', '<=', $dateTo);
             }
 
-            // Filter by payment status
             if ($status !== 'all') {
                 $query->where('status', $status);
             }
@@ -128,34 +135,18 @@ class DownloadController extends Controller
 
             if ($payments->isEmpty()) {
                 return response()->json([
-                    'status' => false,
-                    'message' => 'No salary payments found for the selected filters.',
-                    'records_count' => 0
+                    'success'       => false,
+                    'status'        => false,
+                    'message'       => 'No salary payments found for the selected filters.',
+                    'records_count' => 0,
                 ], 404);
             }
 
-            // 6. Prepare export headers
-            $headers = [
-                'S/N',
-                'Employee Name',
-                'Email',
-                'Phone Number',
-                'Job Title',
-                'Amount',
-                'Payment Status',
-                'Payment Reference',
-                'Payment Date',
-                'Bank Name',
-                'Account Name',
-                'Account Number',
-            ];
-
-            // 7. Prepare payment records
+            // 6. Format rows
             $rows = [];
-            $sn = 1;
+            $sn   = 1;
 
             foreach ($payments as $payment) {
-
                 $employee = $payment->employee;
 
                 $rows[] = [
@@ -180,252 +171,185 @@ class DownloadController extends Controller
                 ];
             }
 
-            // 8. Generate filename
+            // The total counts successful payments only
+            $totalPaid = (float) $payments->where('status', 'successful')->sum('amount');
+
+            // 7. File name, format and title
+            $isCsv     = $rawFormat === 'csv';
+            $extension = $isCsv ? 'csv' : 'xls';
+            $format    = $isCsv ? 'csv' : 'excel';
+
             $period = $month
-                ? $month
-                : ($dateFrom && $dateTo
-                    ? $dateFrom . '_to_' . $dateTo
-                    : 'all_months');
+                ?: ($dateFrom && $dateTo ? $dateFrom . '_to_' . $dateTo : 'all_months');
 
-            $filename = 'company_payments_' .
-                $company->id . '_' .
-                $period . '_' .
-                now()->format('Ymd_His');
+            // Random part makes the public URL impossible to guess
+            $fileName = 'company_payments_' . $company->id . '_' . $period . '_'
+                . now()->format('Ymd_His') . '_' . Str::lower(Str::random(8)) . '.' . $extension;
 
-            // 9. Create export directory
-            $storageDir = storage_path('app/exports');
+            $title = 'Company Salary Payment Report';
+
+            if ($month) {
+                $title .= ' - ' . Carbon::createFromFormat('Y-m', $month)->format('F Y');
+            } elseif (!$dateFrom && !$dateTo) {
+                $title .= ' - All Months';
+            } else {
+                $title .= ' - ' . $period;
+            }
+
+            // 8. Storage directory (public disk), with old exports cleaned up
+            $storageDir = storage_path('app/public/downloads');
 
             if (!is_dir($storageDir)) {
                 mkdir($storageDir, 0755, true);
             }
 
-            /*
-            |--------------------------------------------------------------------------
-            | 10. Generate CSV
-            |--------------------------------------------------------------------------
-            */
-
-            if ($format === 'csv') {
-
-                $filePath = $storageDir . '/' . $filename . '.csv';
-
-                $file = fopen($filePath, 'w');
-
-                // UTF-8 BOM for Excel compatibility
-                fprintf($file, chr(0xEF) . chr(0xBB) . chr(0xBF));
-
-                fputcsv($file, $headers);
-
-                foreach ($rows as $row) {
-                    fputcsv($file, $row);
+            foreach (glob($storageDir . '/company_payments_*') ?: [] as $old) {
+                if (is_file($old) && filemtime($old) < now()->subDay()->getTimestamp()) {
+                    @unlink($old);
                 }
-
-                fclose($file);
-
-            } else {
-
-                /*
-                |--------------------------------------------------------------------------
-                | 11. Generate Excel
-                |--------------------------------------------------------------------------
-                */
-
-                $spreadsheet = new Spreadsheet();
-
-                $sheet = $spreadsheet->getActiveSheet();
-
-                $sheet->setTitle('Salary Payments');
-
-                // Report title
-                $title = 'Company Salary Payment Report';
-
-                if ($month) {
-                    $title .= ' - ' . Carbon::createFromFormat('Y-m', $month)
-                        ->format('F Y');
-                } elseif (!$dateFrom && !$dateTo) {
-                    $title .= ' - All Months';
-                } else {
-                    $title .= ' - ' . $period;
-                }
-
-                $sheet->setCellValue('A1', $title);
-
-                $sheet->mergeCells('A1:L1');
-
-                // Title styling
-                $sheet->getStyle('A1')->applyFromArray([
-                    'font' => [
-                        'bold' => true,
-                        'size' => 16,
-                        'color' => ['rgb' => 'FFFFFF'],
-                    ],
-                    'fill' => [
-                        'fillType' => Fill::FILL_SOLID,
-                        'startColor' => ['rgb' => '245B35'],
-                    ],
-                    'alignment' => [
-                        'horizontal' => Alignment::HORIZONTAL_CENTER,
-                        'vertical' => Alignment::VERTICAL_CENTER,
-                    ],
-                ]);
-
-                $sheet->getRowDimension(1)->setRowHeight(30);
-
-                // Column headers
-                $column = 'A';
-
-                foreach ($headers as $header) {
-                    $sheet->setCellValue($column . '3', $header);
-                    $column++;
-                }
-
-                // Header styling
-                $sheet->getStyle('A3:L3')->applyFromArray([
-                    'font' => [
-                        'bold' => true,
-                        'color' => ['rgb' => 'FFFFFF'],
-                        'size' => 10,
-                    ],
-                    'fill' => [
-                        'fillType' => Fill::FILL_SOLID,
-                        'startColor' => ['rgb' => '245B35'],
-                    ],
-                    'alignment' => [
-                        'horizontal' => Alignment::HORIZONTAL_CENTER,
-                        'vertical' => Alignment::VERTICAL_CENTER,
-                    ],
-                ]);
-
-                $sheet->getRowDimension(3)->setRowHeight(25);
-
-                // Insert payment records
-                $rowNumber = 4;
-
-                foreach ($rows as $row) {
-
-                    $column = 'A';
-
-                    foreach ($row as $value) {
-
-                        $sheet->setCellValue(
-                            $column . $rowNumber,
-                            $value
-                        );
-
-                        $column++;
-                    }
-
-                    // Alternate row background
-                    if ($rowNumber % 2 === 0) {
-                        $sheet->getStyle(
-                            "A{$rowNumber}:L{$rowNumber}"
-                        )->applyFromArray([
-                            'fill' => [
-                                'fillType' => Fill::FILL_SOLID,
-                                'startColor' => ['rgb' => 'F3F7F4'],
-                            ],
-                        ]);
-                    }
-
-                    $rowNumber++;
-                }
-
-                $lastRow = $rowNumber - 1;
-
-                // Amount formatting
-                $sheet->getStyle("F4:F{$lastRow}")
-                    ->getNumberFormat()
-                    ->setFormatCode('#,##0.00');
-
-                // Total amount
-                $totalRow = $rowNumber + 1;
-
-                $sheet->setCellValue('E' . $totalRow, 'TOTAL AMOUNT');
-
-                $sheet->setCellValue(
-                    'F' . $totalRow,
-                    (float) $payments->sum('amount')
-                );
-
-                $sheet->getStyle("E{$totalRow}:F{$totalRow}")
-                    ->applyFromArray([
-                        'font' => [
-                            'bold' => true,
-                        ],
-                        'fill' => [
-                            'fillType' => Fill::FILL_SOLID,
-                            'startColor' => ['rgb' => 'E2F0E8'],
-                        ],
-                    ]);
-
-                $sheet->getStyle("F{$totalRow}")
-                    ->getNumberFormat()
-                    ->setFormatCode('#,##0.00');
-
-                // Borders
-                $sheet->getStyle("A3:L{$lastRow}")
-                    ->getBorders()
-                    ->getAllBorders()
-                    ->setBorderStyle(Border::BORDER_THIN);
-
-                // Auto-size columns
-                foreach (range('A', 'L') as $column) {
-                    $sheet->getColumnDimension($column)->setAutoSize(true);
-                }
-
-                // Alignment
-                $sheet->getStyle("A3:A{$lastRow}")
-                    ->getAlignment()
-                    ->setHorizontal(Alignment::HORIZONTAL_CENTER);
-
-                $sheet->getStyle("F4:F{$lastRow}")
-                    ->getAlignment()
-                    ->setHorizontal(Alignment::HORIZONTAL_RIGHT);
-
-                // Save Excel file
-                $filePath = $storageDir . '/' . $filename . '.xlsx';
-
-                $writer = new Xlsx($spreadsheet);
-
-                $writer->save($filePath);
-
-                $spreadsheet->disconnectWorksheets();
-
-                unset($spreadsheet);
             }
 
-            /*
-            |--------------------------------------------------------------------------
-            | 12. Download file
-            |--------------------------------------------------------------------------
-            */
+            $filePath = $storageDir . DIRECTORY_SEPARATOR . $fileName;
 
-            return response()->download(
-                $filePath,
-                basename($filePath),
-                [
-                    'Content-Type' => $format === 'csv'
+            // 9. Generate the file
+            if ($isCsv) {
+                $this->generatePaymentsCsv($rows, $filePath);
+            } else {
+                $this->generatePaymentsExcel($rows, $title, $totalPaid, $filePath);
+            }
+
+            // Fully qualified URL that downloads the file directly
+            $downloadUrl = asset('storage/downloads/' . $fileName);
+
+            $now = Carbon::now();
+
+            // Optional: return the file itself (?download=true)
+            if ($request->boolean('download') && file_exists($filePath)) {
+                return response()->download($filePath, $fileName, [
+                    'Content-Type' => $isCsv
                         ? 'text/csv; charset=UTF-8'
-                        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                ]
-            )->deleteFileAfterSend(true);
+                        : 'application/vnd.ms-excel',
+                ]);
+            }
+
+            // 10. Return the URL to download the file
+            return response()->json([
+                'success'       => true,
+                'status'        => true,
+                'message'       => 'Export is ready.',
+                'download_url'  => $downloadUrl,
+                'file_name'     => $fileName,
+                'file_type'     => $format,
+                'records_count' => count($rows),
+                'total_paid'    => $totalPaid,
+                'generated_at'  => $now->format('Y-m-d H:i:s'),
+            ], 200);
 
         } catch (\Throwable $e) {
 
             Log::error('Company payment export error', [
                 'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace'   => $e->getTraceAsString(),
             ]);
 
             return response()->json([
-                'status' => false,
+                'success' => false,
+                'status'  => false,
                 'message' => 'Unable to export payment records.',
-                'error' => config('app.debug')
-                    ? $e->getMessage()
-                    : null
+                'error'   => config('app.debug') ? $e->getMessage() : null,
             ], 500);
         }
     }
 
+    /**
+     * Generate a CSV file with UTF-8 BOM encoding.
+     */
+    protected function generatePaymentsCsv(array $rows, string $filePath): void
+    {
+        $file = fopen($filePath, 'w');
 
+        // UTF-8 BOM for Microsoft Excel compatibility
+        fwrite($file, chr(0xEF) . chr(0xBB) . chr(0xBF));
+
+        fputcsv($file, self::PAYMENT_HEADERS);
+
+        foreach ($rows as $row) {
+            fputcsv($file, $row);
+        }
+
+        fclose($file);
+    }
+
+    /**
+     * Generate an Excel-readable .xls file (a styled table). No library needed.
+     */
+    protected function generatePaymentsExcel(array $rows, string $title, float $totalPaid, string $filePath): void
+    {
+        $headers  = self::PAYMENT_HEADERS;
+        $cols     = count($headers);
+        $green    = '#245B35';
+        $textCols = [3, 11]; // Phone Number and Account Number stay as text (keeps leading zeros)
+        $widths   = [50, 160, 200, 110, 130, 100, 100, 220, 100, 130, 160, 120];
+
+        $html  = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">';
+        $html .= '<head><meta charset="UTF-8">';
+        $html .= '<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>';
+        $html .= '<x:Name>Salary Payments</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>';
+        $html .= '</x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->';
+        $html .= '<style>';
+        $html .= 'table{border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:11pt;}';
+        $html .= 'td,th{border:1px solid #BBBBBB;padding:4px 6px;}';
+        $html .= '.title{background:' . $green . ';color:#FFFFFF;font-size:16pt;font-weight:bold;text-align:center;height:34px;border:none;}';
+        $html .= '.head{background:' . $green . ';color:#FFFFFF;font-weight:bold;text-align:center;height:26px;}';
+        $html .= '.alt{background:#F3F7F4;}';
+        $html .= '.num{mso-number-format:"\#\,\#\#0\.00";text-align:right;}';
+        $html .= '.txt{mso-number-format:"\@";}';
+        $html .= '.total{background:#E2F0E8;font-weight:bold;}';
+        $html .= '</style></head><body><table>';
+
+        foreach ($widths as $w) {
+            $html .= '<col width="' . $w . '">';
+        }
+
+        // Title row
+        $html .= '<tr><td class="title" colspan="' . $cols . '">' . e($title) . '</td></tr>';
+        $html .= '<tr><td colspan="' . $cols . '" style="border:none;">&nbsp;</td></tr>';
+
+        // Header row
+        $html .= '<tr>';
+        foreach ($headers as $header) {
+            $html .= '<th class="head">' . e($header) . '</th>';
+        }
+        $html .= '</tr>';
+
+        // Data rows
+        foreach ($rows as $i => $row) {
+            $class = $i % 2 === 1 ? ' class="alt"' : '';
+            $html .= '<tr' . $class . '>';
+
+            foreach ($row as $index => $value) {
+                if ($index === 0) {
+                    $html .= '<td style="text-align:center;">' . e((string) $value) . '</td>';
+                } elseif ($index === 5) {
+                    $html .= '<td class="num">' . number_format((float) $value, 2, '.', '') . '</td>';
+                } elseif (in_array($index, $textCols, true)) {
+                    $html .= '<td class="txt">' . e((string) $value) . '</td>';
+                } else {
+                    $html .= '<td>' . e((string) $value) . '</td>';
+                }
+            }
+
+            $html .= '</tr>';
+        }
+
+        // Total row
+        $html .= '<tr><td colspan="5" class="total" style="text-align:right;">TOTAL PAID (SUCCESSFUL)</td>';
+        $html .= '<td class="total num">' . number_format($totalPaid, 2, '.', '') . '</td>';
+        $html .= '<td class="total" colspan="' . ($cols - 6) . '">&nbsp;</td></tr>';
+
+        $html .= '</table></body></html>';
+
+        // UTF-8 BOM first, so Excel reads the file as UTF-8
+        file_put_contents($filePath, "\xEF\xBB\xBF" . $html);
+    }
 }

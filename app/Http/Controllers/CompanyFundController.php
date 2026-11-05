@@ -150,6 +150,17 @@ class CompanyFundController extends Controller
             return response()->json(['status' => false, 'message' => 'Only Company can fund account'], 403);
         }
 
+        $window = $this->depositWindowStatus();
+
+        if (!$window['open']) {
+            return response()->json([
+                'status'   => false,
+                'message'  => 'Deposits are only available Monday to Saturday, 9:00am to 6:00pm. '
+                    . 'Please try again on ' . $window['next_open']->format('l, j F \a\t g:ia') . '.',
+                'opens_at' => $window['next_open']->toIso8601String(),
+            ], 403);
+        }
+
         $validated = $request->validate([
             'amount'          => ['required', 'numeric', 'min:1', 'regex:/^\d+(\.\d{1,2})?$/'],
             'company_id'      => ['required', 'exists:companies,id'],
@@ -239,6 +250,33 @@ class CompanyFundController extends Controller
             'checkout_amount' => $checkoutTotal,
             'reference'       => $transaction->reference,
         ]);
+    }
+
+    private function depositWindowStatus(): array
+    {
+        $now = \Carbon\Carbon::now('Africa/Lagos');
+
+        $openHour  = 9;   
+        $closeHour = 18;  
+
+        $isOpenDay = !$now->isSunday();
+        $isOpen    = $isOpenDay && $now->hour >= $openHour && $now->hour < $closeHour;
+
+        if ($isOpen) {
+            return ['open' => true, 'next_open' => $now];
+        }
+
+        $next = $now->copy()->setTime($openHour, 0, 0);
+
+        if ($now->isSunday() || $now->hour >= $closeHour) {
+            $next->addDay();
+        }
+
+        if ($next->isSunday()) {
+            $next->addDay();
+        }
+
+        return ['open' => false, 'next_open' => $next];
     }
 
     public function verifyDeposit(Request $request,string $reference,MoniepointService $moniepoint,DepositSettler $settler) 

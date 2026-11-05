@@ -38,6 +38,7 @@ return [
         'registration_template' => env('TERMII_REGISTRATION_TEMPLATE_ID'),
         'forget_template' => env('TERMII_FORGET_PASSWORD_TEMPLATE_ID'),
         'resendotp_template' => env('TERMII_RESENDOTP_TEMPLATE_ID'),
+        'deduction_template'  => env('TERMII_DEDUCTION_TEMPLATE_ID'),
     ],
 
     'paystack' => [
